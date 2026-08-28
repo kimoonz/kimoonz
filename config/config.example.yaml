@@ -49,7 +49,19 @@ run:
     attempt_interval_ms: 700   # 재시도 간격 (하한 300ms)
     sync_clock: true       # 서버 Date 헤더로 로컬 시계 오차 보정
 
-  # 오픈런에서 놓쳤을 때 쓰는 취소표 감시
+  # 실시간 재고 추적 (track) — 마감→예약가능 전환을 감지해 즉시 확보
+  track:
+    interval_seconds: 20     # 하한: API 경로 5초, 달력 DOM 경로 15초
+    jitter_seconds: 3
+    months_ahead: 2          # 이번 달 포함 몇 개월치를 추적할지
+    auto_reserve: true       # 취소 감지 시 결제 직전까지 자동 진행
+    notify_all_changes: false  # true 면 대상 외 날짜의 변화도 전부 알림
+    reserve_cooldown_minutes: 10   # 같은 칸 재시도 최소 간격
+    max_duration_minutes: 0  # 0 이면 무제한
+    dashboard: true
+    db_path: ".state/tracker.db"
+
+  # 오픈런에서 놓쳤을 때 쓰는 단순 반복 확인 (track 이 있으면 보통 필요 없음)
   watch:
     interval_seconds: 60   # 하한 10초. 사이트 부담을 생각해 너무 짧게 두지 마세요.
     jitter_seconds: 15
@@ -71,3 +83,19 @@ notify:
     sender: "${SMTP_USER}"
     recipients:
       - "you@example.com"
+
+# 사이트가 쓰는 재고 조회 API. `python -m paradogo sniff` 로 찾아서 채웁니다.
+# 비워두면 추적기가 달력 DOM을 읽는 방식으로 자동 폴백합니다(느리고 날짜 단위까지만).
+api:
+  enabled: false
+  # {year} {month} {month02} {ym} {ym_dash} {first_day} {last_day} 를 쓸 수 있습니다.
+  url: ""
+  method: "GET"
+  headers: {}
+  items_path: ""        # 응답에서 목록이 있는 경로. 예: "data.list"
+  date_field: "date"    # 날짜가 든 필드명, 또는 "{y}-{m}-{d}" 같은 조합 템플릿
+  cabin_field: ""       # 비우면 날짜 단위로만 추적
+  remaining_field: ""   # 잔여 수량 필드. 있으면 0보다 클 때 예약가능으로 판정
+  price_field: ""
+  status_field: ""      # 잔여 수량 대신 상태 문자열을 주는 경우
+  status_available_values: []   # 예: ["Y", "OPEN", "가능"]

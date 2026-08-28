@@ -143,6 +143,33 @@ class BookingFlow:
             )
         log.info("로그인 완료.")
 
+    async def login_manually(self, timeout_minutes: int = 10) -> None:
+        """브라우저를 띄워 두고 사람이 직접 로그인하기를 기다린다.
+
+        캡차·본인확인·간편로그인이 걸린 사이트에서는 자동 입력이 통하지 않는다.
+        그럴 때는 한 번만 손으로 로그인하고 세션을 저장해 두면, 이후 실행은
+        그 세션을 그대로 재사용한다.
+        """
+        await self.page.goto(self.cfg.site.login_url, wait_until="domcontentloaded")
+        await self.dismiss_popups()
+        print("\n" + "=" * 68)
+        print("열린 브라우저 창에서 직접 로그인하세요.")
+        print("(캡차·본인확인·간편로그인 모두 직접 하시면 됩니다)")
+        print("로그인이 끝나면 이 터미널에서 Enter 를 누르세요.")
+        print("=" * 68)
+        await asyncio.get_event_loop().run_in_executor(None, input)
+
+        await self.dismiss_popups()
+        if not await self.is_logged_in():
+            shot = await self.session.screenshot("manual-login-check")
+            raise LoginFailed(
+                "로그인 완료 표식(login.success_marker)을 찾지 못했습니다. "
+                "정말 로그인됐다면 selectors.yaml 의 login.success_marker 를 "
+                "'로그인 상태에서만 보이는 요소'로 고쳐 주세요."
+                + (f" 스크린샷: {shot}" if shot else "")
+            )
+        log.info("수동 로그인 확인 완료.")
+
     async def ensure_logged_in(self) -> None:
         """이미 로그인 상태면 건너뛴다(오픈 시각에 몇 초를 아끼는 지점).
 

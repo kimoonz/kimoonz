@@ -21,6 +21,9 @@ _ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}")
 
 # 사이트에 부담을 주지 않기 위한 하한선. 설정으로 더 짧게 낮출 수 없다.
 MIN_WATCH_INTERVAL_SEC = 10.0
+# 추적 폴링 하한. API 한 번(JSON 한 건)은 페이지 전체 로딩보다 가벼우므로 더 짧게 허용한다.
+MIN_TRACK_INTERVAL_API_SEC = 5.0
+MIN_TRACK_INTERVAL_DOM_SEC = 15.0
 MIN_ATTEMPT_INTERVAL_MS = 300
 MAX_OPEN_ATTEMPTS = 120
 
@@ -201,6 +204,88 @@ class WatchConfig:
 
 
 @dataclass(slots=True)
+class ApiConfig:
+    """사이트가 쓰는 재고 조회 API. `sniff` 명령으로 찾아서 채운다.
+
+    비어 있으면 추적기는 달력 DOM을 읽는 방식으로 자동 폴백한다(느리고 날짜 단위).
+    """
+
+    enabled: bool = False
+    url_template: str = ""   # {year} {month} {month02} {ym} 사용 가능
+    method: str = "GET"
+    headers: dict[str, str] = field(default_factory=dict)
+    body_template: str = ""  # POST 일 때 보낼 JSON 문자열 (같은 placeholder 사용)
+    items_path: str = ""     # 응답에서 목록이 있는 경로. 'data.list' 처럼 점으로 구분
+    date_field: str = "date"     # 필드명, 또는 '{y}-{m}-{d}' 같은 템플릿
+    cabin_field: str = ""        # 비우면 날짜 단위로만 추적
+    remaining_field: str = ""
+    price_field: str = ""
+    status_field: str = ""
+    status_available_values: list[str] = field(default_factory=list)
+
+    @property
+    def usable(self) -> bool:
+        return self.enabled and bool(self.url_template) and bool(self.date_field)
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "ApiConfig":
+        values = raw.get("status_available_values") or []
+        if isinstance(values, str):
+            values = [values]
+        headers = raw.get("headers") or {}
+        return cls(
+            enabled=bool(raw.get("enabled", False)),
+            url_template=str(raw.get("url") or raw.get("url_template") or ""),
+            method=str(raw.get("method", "GET")).upper(),
+            headers={str(k): str(v) for k, v in headers.items()},
+            body_template=str(raw.get("body") or raw.get("body_template") or ""),
+            items_path=str(raw.get("items_path") or ""),
+            date_field=str(raw.get("date_field") or "date"),
+            cabin_field=str(raw.get("cabin_field") or ""),
+            remaining_field=str(raw.get("remaining_field") or ""),
+            price_field=str(raw.get("price_field") or ""),
+            status_field=str(raw.get("status_field") or ""),
+            status_available_values=[str(v) for v in values],
+        )
+
+
+@dataclass(slots=True)
+class TrackConfig:
+    """실시간 재고 추적."""
+
+    interval_seconds: float = 20.0
+    jitter_seconds: float = 3.0
+    months_ahead: int = 2          # 이번 달 포함 몇 개월치를 추적할지
+    auto_reserve: bool = True      # 취소 감지 시 결제 직전까지 자동 진행
+    notify_all_changes: bool = False  # 대상 외 날짜의 전환도 알릴지
+    reserve_cooldown_minutes: int = 10  # 같은 칸 재시도 최소 간격
+    max_duration_minutes: int = 0  # 0 이면 무제한
+    dashboard: bool = True
+    db_path: Path = Path(".state/tracker.db")
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "TrackConfig":
+        return cls(
+            interval_seconds=float(raw.get("interval_seconds", 20)),
+            jitter_seconds=max(0.0, float(raw.get("jitter_seconds", 3))),
+            months_ahead=max(1, int(raw.get("months_ahead", 2))),
+            auto_reserve=bool(raw.get("auto_reserve", True)),
+            notify_all_changes=bool(raw.get("notify_all_changes", False)),
+            reserve_cooldown_minutes=max(0, int(raw.get("reserve_cooldown_minutes", 10))),
+            max_duration_minutes=max(0, int(raw.get("max_duration_minutes", 0))),
+            dashboard=bool(raw.get("dashboard", True)),
+            db_path=Path(raw.get("db_path", ".state/tracker.db")),
+        )
+
+    def effective_interval(self, source: str) -> float:
+        """소스별 하한선을 적용한 실제 폴링 주기."""
+        floor = (
+            MIN_TRACK_INTERVAL_API_SEC if source == "api" else MIN_TRACK_INTERVAL_DOM_SEC
+        )
+        return max(floor, self.interval_seconds)
+
+
+@dataclass(slots=True)
 class RunConfig:
     headless: bool = False
     slow_mo_ms: int = 0
@@ -210,6 +295,7 @@ class RunConfig:
     artifacts_dir: Path = Path(".artifacts")
     open_time: OpenTimeConfig = field(default_factory=OpenTimeConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
+    track: TrackConfig = field(default_factory=TrackConfig)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "RunConfig":
@@ -222,6 +308,7 @@ class RunConfig:
             artifacts_dir=Path(raw.get("artifacts_dir", ".artifacts")),
             open_time=OpenTimeConfig.from_dict(raw.get("open_time") or {}),
             watch=WatchConfig.from_dict(raw.get("watch") or {}),
+            track=TrackConfig.from_dict(raw.get("track") or {}),
         )
 
 
@@ -290,6 +377,7 @@ class Config:
     target: TargetConfig
     run: RunConfig
     notify: NotifyConfig
+    api: ApiConfig = field(default_factory=ApiConfig)
     source_path: Path | None = None
 
     @classmethod
@@ -303,6 +391,7 @@ class Config:
             target=TargetConfig.from_dict(raw.get("target") or {}),
             run=RunConfig.from_dict(raw.get("run") or {}),
             notify=NotifyConfig.from_dict(raw.get("notify") or {}),
+            api=ApiConfig.from_dict(raw.get("api") or {}),
             source_path=source,
         )
 

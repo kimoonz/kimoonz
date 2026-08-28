@@ -52,6 +52,22 @@ booking:
     - "[data-date='{date}']"
     - "td[data-day='{day}']"
     - ".calendar td:not(.disabled):has-text('{day_int}')"
+  # --- 아래 3개는 `track` (재고 추적)이 달력을 통째로 읽을 때 씁니다 ---
+  # 달력의 모든 날짜 칸을 한 번에 잡는 셀렉터. 하나씩 조회하면 한 달에 수십 초가 걸립니다.
+  day_cell_all:
+    - "[data-date]"
+    - ".calendar td[data-date]"
+    - ".calendar td"
+  # 위 셀에서 날짜를 담고 있는 속성 이름
+  day_date_attr:
+    - "data-date"
+  # 셀의 class/텍스트에 이 중 하나라도 있으면 마감으로 본다
+  day_soldout_tokens:
+    - "soldout"
+    - "disabled"
+    - "마감"
+    - "예약불가"
+
   # 날짜 칸 '안'에서 찾는 매진 표식
   day_soldout_marker:
     - ".soldout"

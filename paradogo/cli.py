@@ -18,6 +18,7 @@ from .clock import (
     target_stay_month,
 )
 from .config import Config
+from .dashboard import supports_color
 from .errors import ParadogoError
 from .notify import Notifier
 from .selectors import SelectorMap
@@ -70,9 +71,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="설정·셀렉터·알림 점검")
     sub.add_parser("next-open", help="다음 예약 오픈 시각 계산")
-    sub.add_parser("login", help="로그인해서 세션 파일 저장")
+    p_login = sub.add_parser("login", help="로그인해서 세션 파일 저장")
+    p_login.add_argument(
+        "--manual", action="store_true",
+        help="자동 입력 대신 브라우저를 띄워 직접 로그인 (캡차·본인확인이 있으면 이쪽)",
+    )
+
+    p_scan = sub.add_parser(
+        "scan", help="지금 예약 가능한 날짜를 한 번만 조회 (읽기 전용, 아무것도 클릭하지 않음)"
+    )
+    p_scan.add_argument("--months", type=int, help="조회할 개월 수")
     sub.add_parser("notify-test", help="알림 채널 테스트 발송")
-    sub.add_parser("watch", help="취소표 감시")
+    sub.add_parser("watch", help="취소표 감시 (단순 반복 확인)")
+
+    p_track = sub.add_parser(
+        "track", help="실시간 재고 추적 — 마감→예약가능 전환(취소)을 감지해 즉시 확보"
+    )
+    p_track.add_argument("--months", type=int, help="추적할 개월 수 (기본: 설정값)")
+    p_track.add_argument("--no-dashboard", action="store_true", help="대시보드 없이 로그만")
+    p_track.add_argument("--alert-only", action="store_true",
+                         help="취소를 감지해도 예약은 하지 않고 알리기만")
+    p_track.add_argument("--minutes", type=int, help="이 시간(분) 뒤 종료 (기본: 무제한)")
+
+    p_stats = sub.add_parser("stats", help="추적 이력 통계 — 언제/어느 날짜에 취소가 나왔나")
+    p_stats.add_argument("--limit", type=int, default=15, help="표시할 항목 수")
+
+    p_sniff = sub.add_parser("sniff", help="사이트의 재고 조회 API 찾기 (추적 속도 향상)")
+    p_sniff.add_argument("--url", help="시작할 URL (기본: site.booking_path)")
+    p_sniff.add_argument("--auto", action="store_true",
+                         help="Enter 를 기다리지 않고 5초만 엿듣기")
 
     p_discover = sub.add_parser("discover", help="실제 화면에서 셀렉터 후보 수집")
     p_discover.add_argument("--url", help="분석할 URL (기본: site.booking_path)")
@@ -132,6 +159,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"       대상 날짜  : {', '.join(d.isoformat() for d in cfg.target.check_in_dates) or '(없음)'}")
     print(f"       희망 캐빈  : {', '.join(cfg.target.cabin_types) or '전체'}")
     print(f"       모의 실행  : {'예' if cfg.run.dry_run else '아니오 (실제 진행)'}")
+    if cfg.api.usable:
+        print(f"       재고 조회  : API — {cfg.api.url_template}")
+        print(f"                    주기 {cfg.run.track.effective_interval('api'):.0f}초")
+    else:
+        print("       재고 조회  : 달력 DOM (API 미설정 — `sniff` 로 찾으면 더 빠릅니다)")
+        print(f"                    주기 {cfg.run.track.effective_interval('dom'):.0f}초")
+    state = cfg.run.storage_state
+    print(f"       로그인 세션: {'있음' if state.exists() else '없음 — `login --manual` 먼저'}"
+          f" ({state})")
     problems += cfg.validate_for_booking()
 
     try:
@@ -197,16 +233,33 @@ def cmd_login(args: argparse.Namespace) -> int:
     from .flow import BookingFlow
 
     cfg, smap = load_all(args)
+    if args.manual and not args.headless:
+        cfg.run.headless = False  # 사람이 봐야 로그인할 수 있다
 
     async def main() -> int:
         async with BrowserSession(cfg, reuse_state=False) as session:
             flow = BookingFlow(session, smap, cfg)
-            await flow.login()
+            if args.manual:
+                await flow.login_manually()
+            else:
+                await flow.login()
             path = await session.save_state()
             print(f"세션을 저장했습니다: {path}")
+            print("이제 scan / track / snipe 은 이 세션을 재사용합니다.")
         return 0
 
     return asyncio.run(main())
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    from .scan import render_scan, run_scan
+
+    cfg, smap = load_all(args)
+    snapshot = asyncio.run(run_scan(cfg, smap, args.months))
+    targets = {d.isoformat() for d in cfg.target.check_in_dates}
+    print()
+    print(render_scan(snapshot, targets, color=supports_color()))
+    return 0 if snapshot.slots else 2
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
@@ -255,13 +308,101 @@ def cmd_snipe(args: argparse.Namespace) -> int:
     return 0 if result.ok else 2
 
 
+def cmd_track(args: argparse.Namespace) -> int:
+    from .tracker import run_track
+
+    cfg, smap = load_all(args)
+    if args.months:
+        cfg.run.track.months_ahead = args.months
+    if args.no_dashboard:
+        cfg.run.track.dashboard = False
+    if args.alert_only:
+        cfg.run.track.auto_reserve = False
+    if args.minutes:
+        cfg.run.track.max_duration_minutes = args.minutes
+
+    notifier = Notifier(cfg.notify)
+    result = asyncio.run(run_track(cfg, smap, notifier))
+    if result is None:
+        return 0
+    print(result.message)
+    return 0 if result.ok else 2
+
+
+def cmd_sniff(args: argparse.Namespace) -> int:
+    from .sniff import run_sniff
+
+    cfg, _ = load_all(args, need_selectors=False)
+    if not args.headless:
+        cfg.run.headless = False  # 사람이 달력을 눌러 봐야 요청이 나온다
+    path = asyncio.run(run_sniff(cfg, args.url, interactive=not args.auto))
+    print(f"\napi 블록 초안: {path}")
+    print("확인 후 config/config.yaml 의 최상위 `api:` 로 옮기세요.")
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    from .store import TrackerStore
+
+    cfg, _ = load_all(args, need_selectors=False)
+    db = cfg.run.track.db_path
+    if not db.exists():
+        print(f"추적 DB가 아직 없습니다: {db}\n→ `python -m paradogo track` 를 먼저 돌리세요.")
+        return 1
+
+    with TrackerStore(db) as store:
+        counts = store.counts()
+        health = store.poll_health(200)
+        print(f"DB: {db}")
+        print(f"현재 추적 중인 칸 : {counts['state']}개")
+        print(f"기록된 변화       : {counts['events']}건 (그중 취소 {counts['opened']}건)")
+        print(f"폴링              : {counts['polls']}회, 최근 성공률 "
+              f"{health['success_rate'] * 100:.0f}%, 평균 {health['avg_ms']:.0f}ms")
+
+        by_hour = store.cancellation_by_hour()
+        if by_hour:
+            print("\n시간대별 취소 발생")
+            peak = max(n for _, n in by_hour)
+            for hour, count in by_hour:
+                bar = "█" * max(1, round(count / peak * 32))
+                print(f"  {hour:02d}시 {bar} {count}")
+
+        by_date = store.cancellation_by_date(args.limit)
+        if by_date:
+            print("\n날짜별 취소 발생 (많은 순)")
+            for stay_date, count in by_date:
+                print(f"  {stay_date}  {count}건")
+
+        survival = store.survival_times(args.limit)
+        if survival:
+            print("\n취소표가 살아 있던 시간 (짧은 순)")
+            for stay_date, cabin, seconds in survival:
+                print(f"  {stay_date} {cabin}  {seconds:.0f}초")
+            fastest = survival[0][2]
+            print(f"\n  → 가장 빨리 사라진 게 {fastest:.0f}초. "
+                  f"폴링 주기를 그보다 짧게 두어야 잡을 수 있습니다.")
+
+        recent = store.recent_events(args.limit)
+        if recent:
+            print("\n최근 변화")
+            for row in recent:
+                print(f"  {row['ts'][:19].replace('T', ' ')}  [{row['kind']}]  "
+                      f"{row['stay_date']} {row['cabin']}"
+                      + (f"  {row['note']}" if row["note"] else ""))
+    return 0
+
+
 COMMANDS = {
     "doctor": cmd_doctor,
     "next-open": cmd_next_open,
     "login": cmd_login,
+    "scan": cmd_scan,
     "notify-test": cmd_notify_test,
     "discover": cmd_discover,
     "watch": cmd_watch,
+    "track": cmd_track,
+    "stats": cmd_stats,
+    "sniff": cmd_sniff,
     "snipe": cmd_snipe,
 }
 
