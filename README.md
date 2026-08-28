@@ -34,6 +34,40 @@
 API를 찾아두면 폴링 주기를 5초까지 줄일 수 있습니다(DOM 경로는 15초 하한).
 `sniff` 는 브라우저가 오가는 XHR/fetch 응답을 엿들어 재고 조회 요청을 찾아 줍니다.
 
+## 시작하기 — 이 한 줄이면 됩니다
+
+```bash
+pip install -r requirements.txt && python -m playwright install chromium
+python -m paradogo start
+```
+
+브라우저가 뜨면 **안내대로 클릭만** 하시면 됩니다. 2~3분이면 끝납니다.
+
+```
+1/4  로그인 화면까지 들어가 주세요            → Enter
+2/4  직접 로그인하고 예약 달력까지 가주세요    → Enter
+3/4  날짜를 눌러 캐빈 목록을 띄워 주세요       → Enter
+4/4  (선택) 예약자 정보 화면까지 가주세요      → Enter
+```
+
+그 사이에 화면 구조와 사이트가 쓰는 재고 조회 통신을 관찰해서 **설정 파일을 알아서
+만들고**, 제대로 읽히는지 확인한 뒤, 바로 감시를 시작할지 물어봅니다.
+단계마다 화면이 맞는지 확인해 주므로, 엉뚱한 데서 Enter 를 눌러도 그 자리에서 알려줍니다.
+
+날짜를 미리 정해두셨다면 물어보지 않게 할 수도 있습니다.
+
+```bash
+python -m paradogo --date 2026-09-19 --nights 1 --zones C,D start
+```
+
+설정이 끝난 뒤로는 이것만 기억하시면 됩니다.
+
+```bash
+python -m paradogo track    # 취소 감시 시작
+```
+
+아래는 세부 설정을 직접 만지고 싶을 때 보는 내용입니다.
+
 ## 결제는 자동화하지 않습니다
 
 의도적인 설계입니다.
@@ -75,31 +109,23 @@ python -m playwright install chromium
 
 이미 설치된 크롬을 쓰고 싶으면 `PARADOGO_CHROMIUM_PATH` 환경변수에 실행 파일 경로를 지정하세요.
 
-## 처음 한 번: 이 순서대로
+## 손으로 설정하고 싶다면
+
+`start` 가 해주는 일을 단계별로 나눠 놓은 명령들입니다. 보통은 쓸 일이 없습니다.
 
 ```bash
 cp config/config.example.yaml   config/config.yaml
 cp config/selectors.example.yaml config/selectors.yaml
 
-# 1. 셀렉터 수집 — 실제 화면을 보고 채운다
-python -m paradogo discover --interactive
-
-# 2. 로그인 세션 만들기 — 캡차·본인확인이 있으면 직접 로그인하세요
-python -m paradogo login --manual
-
-# 3. 읽기 전용으로 검증 — 지금 예약 가능한 날짜가 제대로 보이는지 확인
-python -m paradogo scan
-
-# 4. (권장) 재고 조회 API 찾기 — 추적이 훨씬 빨라진다
-python -m paradogo sniff
-
-# 5. 전체 점검
-python -m paradogo doctor
+python -m paradogo discover --interactive   # 화면 구조에서 셀렉터 뽑기
+python -m paradogo login --manual           # 직접 로그인해서 세션 저장
+python -m paradogo sniff                    # 재고 조회 API 찾기
+python -m paradogo scan                     # 읽기 전용으로 확인
+python -m paradogo doctor                   # 전체 점검
 ```
 
-**3번을 꼭 먼저 하세요.** `scan` 은 아무것도 클릭하지 않고 읽기만 합니다. 여기서
-날짜가 제대로 보이면 셀렉터·API 설정이 맞다는 뜻이고, 안 보이면 `track`/`snipe` 도
-동작하지 않습니다.
+`scan` 은 아무것도 클릭하지 않고 읽기만 합니다. 여기서 날짜가 제대로 보이면
+설정이 맞다는 뜻이고, 안 보이면 `track`/`snipe` 도 동작하지 않습니다.
 
 ## 설정
 
@@ -190,6 +216,7 @@ python -m paradogo doctor
 
 | 명령 | 하는 일 |
 | --- | --- |
+| `start` | **처음 쓰면 이것부터** — 설정부터 감시 시작까지 한 번에 |
 | `doctor` | 설정·셀렉터·알림·Playwright 점검 |
 | `next-open` | 다음 오픈 시각과 이때 열리는 투숙 월 계산 (서버 시계 기준) |
 | `discover` | 실제 화면에서 셀렉터 후보 수집 |
@@ -335,6 +362,7 @@ python -m paradogo stats
 
 | 증상 | 원인과 조치 |
 | --- | --- |
+| 뭐가 잘 안 됨 | 일단 `python -m paradogo start` 를 다시 돌려 보세요. 대부분 여기서 해결됩니다 |
 | `셀렉터 'xxx' 를 찾지 못했습니다` | 사이트 DOM이 다르거나 바뀐 것. `discover` 로 다시 수집해 해당 키를 교체 |
 | 로그인이 매번 다시 됨 | `login.success_marker` 가 잘못됨. 로그인 상태에서만 보이는 요소로 바꾸세요 |
 | 로그인 실패 | 캡차·본인확인 단계가 있으면 자동 로그인은 불가. `login` 을 `--headful` 로 돌려 직접 로그인한 뒤 세션을 저장하세요 |
@@ -366,6 +394,7 @@ paradogo/
   store.py      추적 이력 (SQLite): 현재 상태 · 전환 로그 · 폴링 건강도
   tracker.py    실시간 추적 루프 + 취소 확보
   dashboard.py  터미널 달력 대시보드
+  wizard.py     `start` 설치 마법사 — 화면을 관찰해 설정을 자동 생성
   zones.py      구역(A~H) 인식과 우선순위
   scan.py       읽기 전용 조회
   sniff.py      재고 API 찾기
@@ -393,3 +422,5 @@ python -m pytest
   C구역 취소를 2박(체크아웃 날짜 클릭)으로 확보. 2박 자리가 없는 구역에서는
   1박으로 폴백해 확보하는 것까지 확인
 * `sniff`: 목업의 XHR을 엿들어 재고 API와 응답 구조(구역 필드 포함)를 자동 추출
+* `start` 마법사: 4단계를 전부 거쳐 config.yaml / selectors.yaml 을 자동 생성하고,
+  그 파일만으로 조회가 되는지까지 확인

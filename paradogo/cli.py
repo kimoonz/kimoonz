@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from . import __version__
 from .clock import (
@@ -19,6 +19,8 @@ from .clock import (
     target_stay_month,
 )
 from urllib.parse import urlparse
+
+from pathlib import Path
 
 from .config import Config
 from .dashboard import supports_color
@@ -79,6 +81,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser(
+        "start", help="★ 처음 쓰시면 이것부터 — 설정부터 감시 시작까지 한 번에"
+    )
     sub.add_parser("doctor", help="설정·셀렉터·알림 점검")
     sub.add_parser("next-open", help="다음 예약 오픈 시각 계산")
     p_login = sub.add_parser("login", help="로그인해서 세션 파일 저장")
@@ -185,6 +190,122 @@ def cmd_next_open(args: argparse.Namespace) -> int:
     print(f"다음 오픈      : {nxt.strftime('%Y-%m-%d %H:%M:%S')} KST")
     print(f"남은 시간      : {humanize((nxt - now).total_seconds())}")
     print(f"열리는 투숙 월 : {stay_year}년 {stay_month}월")
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    """처음 쓰는 사람이 이 하나만 알면 되도록."""
+    from .scan import render_scan, run_scan
+    from .tracker import run_track
+    from .wizard import ask, ask_yes, run_wizard
+
+    config_path = Path(args.config)
+    selectors_path = Path(args.selectors)
+
+    print("=" * 66)
+    print(" 파라다이스 도고 캐빈 예약 도우미 — 처음 설정")
+    print("=" * 66)
+    print("브라우저를 띄워 드릴 테니 안내대로 클릭만 하시면 됩니다.")
+    print("그 사이에 필요한 설정을 알아서 만들어 둡니다. (2~3분)")
+    print()
+    print("※ 결제는 자동화하지 않습니다. 취소표를 잡으면 결제 화면까지 열어 드리고,")
+    print("  결제 버튼은 직접 누르셔야 합니다.")
+
+    # 무엇을 잡을지 — 인자로 준 게 있으면 묻지 않는다.
+    if args.date:
+        dates = sorted({date.fromisoformat(d) for d in args.date})
+    else:
+        raw = ask("\n체크인 날짜 (YYYY-MM-DD, 여러 개면 쉼표로)", "")
+        if not raw:
+            print("날짜를 입력해야 합니다.")
+            return 1
+        try:
+            dates = sorted({date.fromisoformat(d) for d in _split(raw)})
+        except ValueError as exc:
+            print(f"날짜 형식이 잘못됐습니다(YYYY-MM-DD): {exc}")
+            return 1
+
+    if args.nights:
+        nights = [int(n) for n in _split(args.nights)]
+    else:
+        raw = ask("몇 박? (2박 우선하고 안되면 1박이면 '2,1')", "1")
+        try:
+            nights = [int(n) for n in _split(raw)]
+        except ValueError:
+            print(f"박수는 숫자여야 합니다: {raw}")
+            return 1
+    nights = [n for n in dict.fromkeys(nights) if n >= 1] or [1]
+
+    zones = _split(args.zones) if args.zones else _split(
+        ask("희망 구역 (A~H, 우선순위 순. 없으면 그냥 Enter)", "")
+    )
+    exclude = _split(args.exclude_zones) if args.exclude_zones else _split(
+        ask("피하고 싶은 구역 (없으면 그냥 Enter)", "")
+    )
+
+    checkout = [d + timedelta(days=nights[0]) for d in dates]
+    print(f"\n→ {', '.join(d.isoformat() for d in dates)} 체크인, "
+          f"{nights[0]}박 (체크아웃 {checkout[0].isoformat()})")
+    if zones:
+        print(f"→ 구역 {', '.join(zones)} 우선"
+              + (f" / {', '.join(exclude)} 제외" if exclude else ""))
+
+    # 오픈이 지났는지 미리 알려준다 — 어떤 방식으로 잡을지가 여기서 갈린다.
+    base = Config.load(config_path) if config_path.exists() else Config.from_dict(
+        {"account": {}, "target": {"check_in_dates": [d.isoformat() for d in dates]}}
+    )
+    open_cfg = base.run.open_time
+    now = now_kst()
+    not_open_yet = [
+        d for d in dates
+        if open_datetime_for_stay(d, open_cfg.day_of_month, open_cfg.hour, open_cfg.minute) > now
+    ]
+    if not_open_yet:
+        print("\n이 날짜들은 아직 예약이 열리지 않았습니다 → 오픈 시각에 잡습니다(오픈런).")
+    else:
+        print("\n이 날짜는 예약 오픈이 이미 지났습니다 → 취소가 나오기를 기다려 잡습니다.")
+
+    base.target.check_in_dates = dates
+    # 사람이 직접 클릭해야 하므로 창을 띄운다. 다만 --headless 를 명시했다면 그 뜻을 따른다.
+    base.run.headless = bool(args.headless)
+    try:
+        asyncio.run(run_wizard(base, config_path, selectors_path, dates, nights, zones, exclude))
+    except ParadogoError as exc:
+        print(f"\n설정 중 문제가 생겼습니다: {exc}")
+        return 1
+
+    # 만들어진 설정으로 바로 검증한다.
+    cfg = apply_overrides(Config.load(config_path), args)
+    smap = SelectorMap.load(selectors_path)
+    print("\n제대로 읽히는지 확인해 보겠습니다…")
+    try:
+        snapshot = asyncio.run(run_scan(cfg, smap))
+    except ParadogoError as exc:
+        print(f"\n확인 실패: {exc}")
+        print("→ `python -m paradogo start` 를 다시 돌려 주세요.")
+        return 1
+    print()
+    print(render_scan(snapshot, {d.isoformat() for d in dates}, color=supports_color()))
+
+    if not snapshot.slots:
+        print("\n재고를 하나도 읽지 못했습니다. `start` 를 다시 돌리면서")
+        print("2단계에서 '예약 달력'이 실제로 보이는 화면까지 들어가 주세요.")
+        return 2
+
+    print("\n" + "=" * 66)
+    print("설정 끝났습니다. 이제 감시를 시작하면,")
+    print("  · 취소가 나오는 즉시 잡아서 결제 화면까지 열어 드립니다")
+    print("  · 그때 직접 결제하시면 됩니다 (결제 전엔 확정 아님)")
+    print("  · 알림을 받으시려면 config.yaml 의 notify 를 켜세요")
+    print("=" * 66)
+    if not ask_yes("\n지금 감시를 시작할까요?"):
+        print("\n나중에 시작하시려면:  python -m paradogo track")
+        return 0
+
+    notifier = Notifier(cfg.notify)
+    result = asyncio.run(run_track(cfg, smap, notifier))
+    if result is not None:
+        print(result.message)
     return 0
 
 
@@ -472,6 +593,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 COMMANDS = {
+    "start": cmd_start,
     "doctor": cmd_doctor,
     "next-open": cmd_next_open,
     "login": cmd_login,
