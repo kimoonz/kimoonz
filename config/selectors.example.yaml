@@ -1,0 +1,119 @@
+# 논리 이름 → 후보 셀렉터 목록. 위에서부터 순서대로 시도하고, 화면에 보이는 첫 후보를 씁니다.
+# Playwright 셀렉터 문법을 그대로 쓸 수 있습니다: CSS, text=, role=, xpath= 등.
+#
+# ⚠️ 아래 값은 '흔한 패턴'을 넣은 출발점일 뿐, 실제 사이트에서 검증된 값이 아닙니다.
+#    `python -m paradogo discover --interactive` 로 실제 후보를 뽑아 교체하세요.
+#
+# booking.day_cell 에는 아래 placeholder 를 쓸 수 있습니다:
+#   {date}=2026-10-03  {year}=2026  {month}=10  {day}=03  {day_int}=3  {compact}=20261003
+
+common:
+  # 한국 예약 사이트 특유의 레이어 팝업 닫기 버튼들
+  popup_close:
+    - "text=오늘 하루 보지 않기"
+    - "text=닫기"
+    - ".layer-popup .btn-close"
+    - "button.close"
+
+login:
+  id_input:
+    - "#userId"
+    - "input[name='userId']"
+    - "input[name='memberId']"
+    - "input[name='id']"
+  pw_input:
+    - "#userPw"
+    - "input[name='userPw']"
+    - "input[type='password']"
+  submit:
+    - "button[type='submit']"
+    - "text=로그인"
+    - ".btn-login"
+  # 로그인 성공을 판정하는 표식. 로그인 상태에서만 보이는 것이어야 합니다.
+  success_marker:
+    - "text=로그아웃"
+    - "text=마이페이지"
+    - ".member-info"
+
+booking:
+  month_label:
+    - ".calendar .month"
+    - ".cal-tit"
+    - "[data-month]"
+  prev_month:
+    - "text=이전달"
+    - ".calendar .prev"
+    - "button[aria-label*='이전']"
+  next_month:
+    - "text=다음달"
+    - ".calendar .next"
+    - "button[aria-label*='다음']"
+  day_cell:
+    - "[data-date='{date}']"
+    - "td[data-day='{day}']"
+    - ".calendar td:not(.disabled):has-text('{day_int}')"
+  # 날짜 칸 '안'에서 찾는 매진 표식
+  day_soldout_marker:
+    - ".soldout"
+    - ".disabled"
+    - "text=마감"
+  # 날짜 선택 후 눌러야 하는 조회 버튼(없으면 비워두세요)
+  search_button:
+    - "text=조회하기"
+    - "text=검색"
+  # 캐빈 한 건에 해당하는 반복 카드
+  room_card:
+    - ".room-list li"
+    - ".product-item"
+    - "li.roomType"
+  # 아래 4개는 room_card '안'에서 찾습니다.
+  room_name:
+    - ".room-name"
+    - "h3"
+    - ".tit"
+  room_price:
+    - ".price"
+    - ".won"
+  room_soldout_marker:
+    - "text=마감"
+    - "text=예약불가"
+    - ".soldout"
+  room_reserve_button:
+    - "text=예약하기"
+    - "button.btn-reserve"
+    - "a.reserve"
+
+guest:
+  name:
+    - "#bookerName"
+    - "input[name='bookerName']"
+    - "input[name='name']"
+  phone:
+    - "#bookerTel"
+    - "input[name='bookerTel']"
+    - "input[name='hp']"
+  email:
+    - "#bookerEmail"
+    - "input[name='email']"
+  adults:
+    - "input[name='adultCnt']"
+    - "select[name='adult']"
+  children:
+    - "input[name='childCnt']"
+    - "select[name='child']"
+  agree_all:
+    - "#agreeAll"
+    - "text=전체 동의"
+    - "input[name='agreeAll']"
+  to_payment:
+    - "text=결제하기"
+    - "text=다음 단계"
+    - "button.btn-payment"
+
+payment:
+  # 결제 페이지에 도달했음을 판정하는 표식. 이 표식이 보이면 봇은 멈춥니다.
+  marker:
+    - "text=결제수단"
+    - "text=결제 수단"
+    - "#payment"
+    - ".payment-method"

@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.state/
+.artifacts/
+config/config.yaml
+config/selectors.yaml
+config/selectors.discovered.yaml
+.pytest_cache/
+*.log

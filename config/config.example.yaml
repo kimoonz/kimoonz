@@ -1,0 +1,73 @@
+# paradogo 설정 예시
+#   cp config/config.example.yaml config/config.yaml
+# 비밀번호·토큰은 파일에 직접 쓰지 말고 ${ENV_VAR} 로 두고 환경변수에 넣으세요.
+
+site:
+  base_url: "https://www.paradisespa.co.kr"
+  # ⚠️ 아래 두 경로는 실제 사이트를 열어 주소창을 보고 채워야 합니다.
+  #    `python -m paradogo discover --interactive` 로 확인하면 편합니다.
+  login_path: "/member/login"
+  booking_path: "/reservation/cabin"
+  timezone: "Asia/Seoul"
+
+account:
+  login_id: "${PARADOGO_ID}"
+  password: "${PARADOGO_PW}"
+  # 로그인 계정에 이미 저장돼 자동 입력되면 아래는 비워도 됩니다.
+  booker:
+    name: "홍길동"
+    phone: "010-1234-5678"
+    email: "you@example.com"
+
+target:
+  # 잡고 싶은 체크인 날짜. 위에서부터 우선순위 순으로 시도합니다.
+  check_in_dates:
+    - "2026-10-03"
+    - "2026-10-04"
+  nights: 1
+  # 희망 캐빈 이름(부분 일치). 비워두면 예약 가능한 아무 캐빈이나 잡습니다.
+  cabin_types:
+    - "캐빈"
+  adults: 2
+  children: 0
+
+run:
+  headless: false          # 결제는 사람이 해야 하므로 창을 띄우는 것을 권장
+  slow_mo_ms: 0
+  dry_run: true            # 익숙해지기 전까지는 true 로 두세요(예약 버튼을 누르지 않음)
+  keep_open_minutes: 30    # 결제 페이지 도달 후 브라우저를 열어두는 시간
+  storage_state: ".state/session.json"
+  artifacts_dir: ".artifacts"
+
+  # 캐빈파크는 매달 1일 09:00(KST)에 다음 달 예약이 열립니다.
+  open_time:
+    day_of_month: 1
+    hour: 9
+    minute: 0
+    lead_seconds: 30       # 오픈 몇 초 전에 세션을 되살릴지
+    max_attempts: 40       # 오픈 후 재시도 횟수 (상한 120)
+    attempt_interval_ms: 700   # 재시도 간격 (하한 300ms)
+    sync_clock: true       # 서버 Date 헤더로 로컬 시계 오차 보정
+
+  # 오픈런에서 놓쳤을 때 쓰는 취소표 감시
+  watch:
+    interval_seconds: 60   # 하한 10초. 사이트 부담을 생각해 너무 짧게 두지 마세요.
+    jitter_seconds: 15
+    max_duration_minutes: 720
+    auto_reserve: true     # false 면 발견 시 알림만 보내고 예약은 하지 않음
+
+notify:
+  telegram:
+    enabled: true
+    bot_token: "${TELEGRAM_BOT_TOKEN}"
+    chat_id: "${TELEGRAM_CHAT_ID}"
+  email:
+    enabled: true
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    use_tls: true
+    username: "${SMTP_USER}"
+    password: "${SMTP_PASS}"      # Gmail 은 '앱 비밀번호'를 쓰세요
+    sender: "${SMTP_USER}"
+    recipients:
+      - "you@example.com"
