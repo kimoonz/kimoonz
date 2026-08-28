@@ -48,7 +48,8 @@ def _load_env(path: Path) -> None:
 
 
 def _build_engine(cfg: Config, dry_run: bool) -> Engine:
-    telegram = Telegram(cfg.telegram_token, cfg.telegram_chat_id, dry_run=dry_run)
+    telegram = Telegram(cfg.telegram_token, cfg.telegram_chat_id, dry_run=dry_run,
+                        on_chat_migrated=cfg.save_chat_id)
     state = AlertState.load(cfg.state_dir)
     return Engine(cfg=cfg, telegram=telegram, state=state)
 

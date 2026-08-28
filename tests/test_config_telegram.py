@@ -154,3 +154,127 @@ def test_sizing_block_is_off_by_default():
     text = re.sub(r"<[^>]+>", "", format_signal(cfg, build_signal(cfg, pred)))
     assert "계약 수" not in text
     assert "청산" in text and "익절" in text and "손절" in text
+
+
+# ---------------------------------------------------------------- chat_id 해석
+def test_chat_id_prefers_futures_specific_variable(monkeypatch, tmp_path):
+    """봇 하나로 여러 자동화를 돌릴 때 선물 전용 방이 우선이어야 한다."""
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "공용방")
+    assert cfg.telegram_chat_id == "공용방"
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_FUTURES", "선물방")
+    assert cfg.telegram_chat_id == "선물방"
+
+
+def test_chat_id_falls_back_to_saved_file(monkeypatch, tmp_path):
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_FUTURES", raising=False)
+    assert cfg.telegram_chat_id is None
+    cfg.save_chat_id("-5305089060")
+    assert cfg.telegram_chat_id == "-5305089060"
+
+
+def test_saved_chat_id_file_never_holds_a_token(tmp_path):
+    """토큰이 파일로 새면 안 된다 — 저장되는 건 chat_id 뿐."""
+    import json
+
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    cfg.save_chat_id("-123")
+    stored = json.loads(cfg.chat_id_file.read_text(encoding="utf-8"))
+    assert stored == {"chat_id": "-123"}
+
+
+def test_corrupt_chat_id_file_is_ignored(monkeypatch, tmp_path):
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_FUTURES", raising=False)
+    cfg.chat_id_file.parent.mkdir(parents=True, exist_ok=True)
+    cfg.chat_id_file.write_text("{깨진", encoding="utf-8")
+    assert cfg.telegram_chat_id is None
+
+
+# ---------------------------------------------------------------- 발송 견고성
+class _FakeResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+def test_supergroup_migration_is_followed(monkeypatch):
+    """그룹이 슈퍼그룹이 되면 chat_id 가 바뀐다. 새 id 는 에러에 딱 한 번 실려 온다."""
+    from bayesfutures import telegram as tg_mod
+
+    calls = []
+    saved = []
+
+    def fake_post(url, json=None, timeout=None):
+        calls.append(json["chat_id"])
+        if json["chat_id"] == "-100":
+            return _FakeResponse(400, {"ok": False, "description": "group upgraded",
+                                       "parameters": {"migrate_to_chat_id": -1009999}})
+        return _FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(tg_mod._SESSION, "post", fake_post)
+    tg = tg_mod.Telegram("토큰", "-100", on_chat_migrated=saved.append)
+    assert tg.send("테스트")
+    assert calls == ["-100", "-1009999"]
+    assert saved == ["-1009999"]
+    assert tg.chat_id == "-1009999"
+
+
+def test_rate_limit_waits_then_succeeds(monkeypatch):
+    from bayesfutures import telegram as tg_mod
+
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(1)
+        if len(attempts) == 1:
+            return _FakeResponse(429, {"ok": False, "parameters": {"retry_after": 0}})
+        return _FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(tg_mod._SESSION, "post", fake_post)
+    monkeypatch.setattr(tg_mod.time, "sleep", lambda _s: None)
+    assert tg_mod.Telegram("토큰", "-100").send("테스트")
+    assert len(attempts) == 2
+
+
+def test_bad_token_does_not_retry(monkeypatch):
+    """401 은 재시도해도 소용없다 — 바로 포기해야 한다."""
+    from bayesfutures import telegram as tg_mod
+
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(1)
+        return _FakeResponse(401, {"ok": False, "description": "Unauthorized"})
+
+    monkeypatch.setattr(tg_mod._SESSION, "post", fake_post)
+    assert not tg_mod.Telegram("나쁜토큰", "-100").send("테스트")
+    assert len(attempts) == 1
+
+
+def test_network_error_retries_then_gives_up(monkeypatch):
+    import requests
+
+    from bayesfutures import telegram as tg_mod
+
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(1)
+        raise requests.ConnectionError("끊김")
+
+    monkeypatch.setattr(tg_mod._SESSION, "post", fake_post)
+    monkeypatch.setattr(tg_mod.time, "sleep", lambda _s: None)
+    assert not tg_mod.Telegram("토큰", "-100", retries=3).send("테스트")
+    assert len(attempts) == 3

@@ -177,16 +177,16 @@ python run.py plan --equity 200000
 
 ---
 
-## 시작하려면 이 3가지
+## 시작하려면
 
-| # | 필요한 것 | 어디서 |
+| # | 필요한 것 | 이미 있다면 |
 |---|---|---|
-| 1 | **텔레그램 봇 토큰** | @BotFather → `/newbot` |
-| 2 | **텔레그램 chat_id** | 봇에 `/start` 보낸 뒤 `python scripts/setup_telegram.py` |
-| 3 | **계좌 평가금** | `config.yaml` → `account.equity_usd` |
+| 1 | **텔레그램 봇 토큰** (`TELEGRAM_BOT_TOKEN` 환경변수) | 기존 봇 그대로 재사용 |
+| 2 | **받을 방** (전용 그룹 권장) | `setup_telegram.py` 한 번 실행 |
+| 3 | **계좌 평가금** (`config.yaml` → `account.equity_usd`) | — |
 
 3번이 계약 수를 정하는 기준이라 반드시 실제 값이어야 합니다.
-나머지는 기본값으로 두면 됩니다.
+나머지 설정은 기본값으로 두면 됩니다.
 
 ---
 
@@ -202,33 +202,64 @@ Python 3.11 이상이 필요합니다.
 
 ---
 
-## 텔레그램 연결 (5분)
+## 텔레그램 연결
 
-1. 텔레그램에서 **@BotFather** 를 찾아 대화를 엽니다.
-2. `/newbot` → 봇 이름과 사용자명을 정하면 **토큰**을 줍니다.
-   (`123456789:AAE...` 형태)
-3. 방금 만든 봇을 검색해서 대화창을 열고 **`/start` 를 한 번 보냅니다.**
-   (이걸 안 하면 봇이 나에게 메시지를 못 보냅니다)
-4. 아래를 실행하면 `.env` 파일까지 자동으로 만들어 줍니다.
+**이미 `TELEGRAM_BOT_TOKEN` 환경변수를 쓰는 봇이 있다면 그대로 재사용됩니다.**
+이 프로그램은 같은 변수를 읽으므로 추가 설정 없이 바로 동작합니다.
 
-```bash
-python scripts/setup_telegram.py
+### 봇이 이미 있는 경우
+
+전용 그룹 하나만 만들면 됩니다. 그래야 선물 신호가 다른 피드에 안 섞입니다.
+
+1. 텔레그램에서 새 그룹 생성
+2. 봇을 그룹에 초대
+3. 그룹에서 `/start@봇이름` 전송
+   (그룹 안의 봇은 privacy mode라 `/`로 시작하는 메시지만 봅니다)
+4. `python scripts/setup_telegram.py` 실행 → chat_id 저장
+
+개인 대화로 받으려면 봇에게 `/start`만 보내고 4번을 실행하면 됩니다.
+
+### 봇이 없는 경우
+
+1. 텔레그램에서 **@BotFather** → `/newbot` → 이름 정하면 **토큰**을 줍니다
+2. 토큰을 환경변수에 넣습니다 (파일이 아니라 환경변수인 이유는 아래)
+
+```powershell
+# Windows PowerShell, 한 번만. 설정 후 새 터미널을 열어야 반영됩니다.
+[Environment]::SetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "<토큰>", "User")
 ```
 
-5. 연결 확인:
+```bash
+# macOS / Linux — ~/.zshrc 또는 ~/.bashrc 에 추가
+export TELEGRAM_BOT_TOKEN="<토큰>"
+```
+
+3. 위 "봇이 이미 있는 경우"의 1~4번을 따릅니다
+
+### 확인
 
 ```bash
 python run.py telegram-test
 ```
 
-수동으로 하려면 `.env` 파일을 만들고:
+### 왜 .env 가 아니라 환경변수인가
 
-```
-TELEGRAM_BOT_TOKEN=여기에_토큰
-TELEGRAM_CHAT_ID=여기에_숫자_ID
-```
+프로젝트 폴더가 깃이나 클라우드 드라이브로 동기화돼도 **토큰은 따라가지
+않습니다.** `.env` 도 지원하지만(`.gitignore`에 있음), 폴더째 동기화되는
+환경에서는 환경변수가 안전합니다.
 
-`.env` 는 `.gitignore` 에 있어서 깃에 올라가지 않습니다.
+이 프로그램이 chat_id 를 찾는 순서:
+
+| 순서 | 출처 | 용도 |
+|---|---|---|
+| 1 | `TELEGRAM_CHAT_ID_FUTURES` | 선물 신호 전용 방 |
+| 2 | `TELEGRAM_CHAT_ID` | 공용 기본 방 |
+| 3 | `state/telegram_config.json` | 셋업 스크립트가 저장한 값 |
+
+일반 그룹은 멤버를 추가하거나 설정을 바꾸는 것만으로 슈퍼그룹이 되고 그때
+chat_id 가 바뀝니다. 텔레그램은 새 id 를 **에러에 딱 한 번** 실어 보내는데,
+이 프로그램은 그걸 받아 자동으로 따라가고 `state/telegram_config.json` 에
+저장합니다. 안 그러면 어느 날 발송이 조용히 끊깁니다.
 
 ---
 
@@ -275,17 +306,21 @@ PC가 하루에 몇 번 재시작돼도 알림이 끊기지 않게 하는 설정
 
 ### Windows
 
-1. `Win + R` → `shell:startup` → 열린 폴더에 `scripts\start_windows.bat`
-   바로가기를 넣습니다. (로그인할 때마다 자동 실행)
+`scripts\작업스케줄러_등록.bat` 을 **관리자 권한으로 한 번** 실행하면 끝입니다.
 
-2. 더 확실하게 하려면 **작업 스케줄러**:
-   - `작업 스케줄러` 실행 → `기본 작업 만들기`
-   - 트리거: **컴퓨터 시작 시**
-   - 동작: 프로그램 시작 → `C:\경로\kimoonz\scripts\start_windows.bat`
-   - 속성에서 **"사용자가 로그온했는지 여부에 관계없이 실행"** 체크
-   - 조건 탭에서 "컴퓨터가 AC 전원일 때만 실행" **해제**
+- 부팅 2분 뒤 자동 시작 (네트워크가 올라올 시간)
+- 파이썬이 죽어도 10초 뒤 자동 재시작
+- **사용자 계정으로 실행**되므로 `TELEGRAM_BOT_TOKEN` 사용자 환경변수를
+  그대로 물려받습니다. SYSTEM 계정으로 돌리면 그 변수가 안 보여서
+  발송이 조용히 실패합니다.
 
-`start_windows.bat` 은 파이썬이 죽어도 10초 뒤 자동으로 다시 띄웁니다.
+```
+schtasks /run   /tn "해외선물_신호감시"          지금 바로 시작
+schtasks /query /tn "해외선물_신호감시" /v /fo list   상태 확인
+scripts\작업스케줄러_삭제.bat                    해제
+```
+
+수동으로 띄우려면 `scripts\start_windows.bat` 을 그냥 실행하면 됩니다.
 
 ### macOS / Linux
 
@@ -409,11 +444,13 @@ bayesfutures/
   engine.py       상시 감시 루프
   cli.py          명령줄
 scripts/
-  setup_telegram.py    텔레그램 연결 도우미
-  start_windows.bat    Windows 상시 실행
-  start_unix.sh        macOS/Linux 상시 실행
-  bayesfutures.service Linux systemd 유닛
-tests/                 140개 테스트
+  setup_telegram.py       텔레그램 연결 도우미 (개인·그룹 모두)
+  작업스케줄러_등록.bat    Windows 부팅 시 자동 시작 등록
+  작업스케줄러_삭제.bat    등록 해제
+  start_windows.bat       Windows 상시 실행 (죽으면 자동 재시작)
+  start_unix.sh           macOS/Linux 상시 실행
+  bayesfutures.service    Linux systemd 유닛
+tests/                    148개 테스트
 ```
 
 ```bash

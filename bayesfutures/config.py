@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
@@ -137,14 +138,49 @@ class Config:
     poll_seconds: int = 300            # 상시 실행 시 확인 주기
     state_dir: str = "state"
 
-    # --- 비밀값: 환경변수에서만 읽는다 (파일에 저장 금지) ---
+    # --- 비밀값 ---------------------------------------------------------
+    # 봇 토큰은 환경변수에서만 읽는다. 이 폴더가 클라우드로 동기화되거나
+    # 깃에 올라가도 토큰은 따라가지 않는다.
+    #   Windows:  [Environment]::SetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "<토큰>", "User")
     @property
     def telegram_token(self) -> str | None:
         return os.environ.get("TELEGRAM_BOT_TOKEN") or None
 
     @property
     def telegram_chat_id(self) -> str | None:
-        return os.environ.get("TELEGRAM_CHAT_ID") or None
+        """이 알림을 받을 방.
+
+        용도별 전용 변수를 먼저 본다. 봇 하나로 여러 자동화를 돌릴 때
+        선물 신호가 다른 피드에 섞이지 않게 하려는 것이다.
+        마지막으로 state/telegram_config.json 을 본다(슈퍼그룹 전환 시
+        새 chat_id 가 여기에 자동 저장된다).
+        """
+        for key in ("TELEGRAM_CHAT_ID_FUTURES", "TELEGRAM_CHAT_ID"):
+            value = (os.environ.get(key) or "").strip()
+            if value:
+                return value
+        saved = self.chat_id_file
+        if saved.exists():
+            try:
+                stored = json.loads(saved.read_text(encoding="utf-8")).get("chat_id")
+                return str(stored).strip() or None if stored else None
+            except (json.JSONDecodeError, OSError):
+                return None
+        return None
+
+    @property
+    def chat_id_file(self) -> Path:
+        return Path(self.state_dir) / "telegram_config.json"
+
+    def save_chat_id(self, chat_id: str) -> None:
+        """슈퍼그룹 전환 등으로 바뀐 chat_id 를 남긴다. 토큰은 절대 안 쓴다."""
+        path = self.chat_id_file
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"chat_id": str(chat_id)}, indent=2,
+                                       ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
 
 def _build(cls: type, data: Any) -> Any:
