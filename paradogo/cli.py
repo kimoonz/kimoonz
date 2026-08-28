@@ -46,6 +46,27 @@ REQUIRED_SELECTORS = [
 ]
 
 
+def make_output_safe() -> None:
+    """콘솔에 한글·이모지를 찍다가 죽지 않게 한다.
+
+    한국어 Windows 의 명령 프롬프트는 CP949 다. 여기에 '🚨' 같은 문자를 그대로
+    찍으면 UnicodeEncodeError 로 프로그램이 통째로 멈춘다. 알림 문구 하나 때문에
+    감시가 죽으면 안 되므로, 표현할 수 없는 글자는 대체 문자로 흘려보낸다.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            # 인코딩을 못 바꾸면 최소한 오류로 죽지는 않게 한다.
+            try:
+                reconfigure(errors="replace")
+            except Exception:
+                pass
+
+
 def setup_logging(verbose: bool) -> None:
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
@@ -815,6 +836,7 @@ COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    make_output_safe()
     args = build_parser().parse_args(argv)
     setup_logging(args.verbose)
     try:

@@ -138,3 +138,59 @@ def test_non_numeric_nights_is_rejected():
     raw = {**BASE, "target": {"check_in_dates": ["2026-09-19"], "nights_options": ["이틀"]}}
     with pytest.raises(ConfigError):
         Config.from_dict(raw)
+
+
+def test_console_output_is_made_safe_for_legacy_codepages(monkeypatch, capsys):
+    # 한국어 Windows 콘솔(CP949)에 이모지를 찍으면 UnicodeEncodeError 로 죽는다.
+    # 알림 문구 하나 때문에 감시가 멈추면 안 된다.
+    import io
+    import sys
+
+    from paradogo.cli import make_output_safe
+
+    calls = []
+
+    class Stream(io.StringIO):
+        def reconfigure(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr(sys, "stdout", Stream())
+    monkeypatch.setattr(sys, "stderr", Stream())
+    make_output_safe()
+    assert calls == [
+        {"encoding": "utf-8", "errors": "replace"},
+        {"encoding": "utf-8", "errors": "replace"},
+    ]
+
+
+def test_output_safety_falls_back_when_encoding_cannot_change(monkeypatch):
+    import io
+    import sys
+
+    from paradogo.cli import make_output_safe
+
+    calls = []
+
+    class Stubborn(io.StringIO):
+        def reconfigure(self, **kwargs):
+            if "encoding" in kwargs:
+                raise ValueError("이 스트림은 인코딩을 바꿀 수 없음")
+            calls.append(kwargs)
+
+    monkeypatch.setattr(sys, "stdout", Stubborn())
+    monkeypatch.setattr(sys, "stderr", Stubborn())
+    make_output_safe()  # 죽지 않아야 한다
+    assert calls == [{"errors": "replace"}, {"errors": "replace"}]
+
+
+def test_output_safety_ignores_streams_without_reconfigure(monkeypatch):
+    import sys
+
+    from paradogo.cli import make_output_safe
+
+    class Old:
+        pass
+
+    monkeypatch.setattr(sys, "stdout", Old())
+    monkeypatch.setattr(sys, "stderr", Old())
+    make_output_safe()  # 옛 파이썬/리다이렉트 상황에서도 죽지 않아야 한다
