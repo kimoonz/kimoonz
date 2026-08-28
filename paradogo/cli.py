@@ -17,6 +17,8 @@ from .clock import (
     sync_with_server,
     target_stay_month,
 )
+from urllib.parse import urlparse
+
 from .config import Config
 from .dashboard import supports_color
 from .errors import ParadogoError
@@ -158,6 +160,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"       예약 URL   : {cfg.site.booking_url}")
     print(f"       대상 날짜  : {', '.join(d.isoformat() for d in cfg.target.check_in_dates) or '(없음)'}")
     print(f"       희망 캐빈  : {', '.join(cfg.target.cabin_types) or '전체'}")
+    zones = ", ".join(cfg.target.zones) or "전체"
+    if cfg.target.exclude_zones:
+        zones += f" (제외 {', '.join(cfg.target.exclude_zones)})"
+    print(f"       희망 구역  : {zones}")
+    print(f"       박수       : {', '.join(f'{n}박' for n in cfg.target.nights_options)}")
     print(f"       모의 실행  : {'예' if cfg.run.dry_run else '아니오 (실제 진행)'}")
     if cfg.api.usable:
         print(f"       재고 조회  : API — {cfg.api.url_template}")
@@ -169,6 +176,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     print(f"       로그인 세션: {'있음' if state.exists() else '없음 — `login --manual` 먼저'}"
           f" ({state})")
     problems += cfg.validate_for_booking()
+
+    host = urlparse(cfg.site.base_url).hostname or ""
+    if not host.endswith("paradise.co.kr") and not host.endswith("paradisespa.co.kr"):
+        print(f"       ⚠ base_url 이 파라다이스 공식 도메인이 아닙니다: {host or cfg.site.base_url}")
+        problems.append(
+            "예약은 파라다이스 공식 홈페이지(paradisespa.co.kr)에서 해야 합니다. "
+            "site.base_url 을 확인하세요."
+        )
 
     try:
         smap = SelectorMap.load(args.selectors)
@@ -372,6 +387,13 @@ def cmd_stats(args: argparse.Namespace) -> int:
             print("\n날짜별 취소 발생 (많은 순)")
             for stay_date, count in by_date:
                 print(f"  {stay_date}  {count}건")
+
+        by_zone = store.cancellation_by_zone()
+        if by_zone:
+            print("\n구역별 취소 발생")
+            for zone, count in by_zone:
+                label = zone if zone == "미상" else f"{zone}구역"
+                print(f"  {label}  {count}건")
 
         survival = store.survival_times(args.limit)
         if survival:

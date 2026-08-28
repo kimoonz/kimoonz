@@ -41,11 +41,30 @@ def render_scan(snapshot: Snapshot, targets: set[str], color: bool = True) -> st
         for slot in available:
             mark = " ←대상" if slot.stay_date in targets else ""
             cabin = "" if slot.cabin == DATE_ONLY_CABIN else f" {slot.cabin}"
+            zone = f" [{slot.zone}]" if slot.zone else ""
             rest = f" (잔여 {slot.remaining})" if slot.remaining is not None else ""
             price = f" {slot.price}" if slot.price else ""
-            out.append(f"  {slot.stay_date}{cabin}{rest}{price}{mark}")
+            out.append(f"  {slot.stay_date}{zone}{cabin}{rest}{price}{mark}")
     else:
         out.append("예약 가능한 자리가 없습니다. (전부 마감)")
+
+    # 구역이 실제로 읽히는지 여기서 확인할 수 있어야 한다.
+    # 전부 '미상'이면 zones 설정이 아무 효과도 내지 못한다는 뜻이다.
+    by_zone: dict[str, int] = {}
+    for slot in snapshot.slots:
+        if slot.cabin != DATE_ONLY_CABIN:
+            by_zone[slot.zone or "미상"] = by_zone.get(slot.zone or "미상", 0) + 1
+    if by_zone:
+        out.append("")
+        out.append("구역 인식 결과: " + ", ".join(
+            f"{name} {count}칸" for name, count in sorted(by_zone.items())
+        ))
+        if set(by_zone) == {"미상"}:
+            out.append(
+                "  구역을 하나도 읽지 못했습니다. target.zones 를 써도 효과가 없습니다."
+                " → target.zone_pattern 에 정규식을 직접 주거나,"
+                " selectors.yaml 의 booking.room_zone 을 지정하세요."
+            )
 
     missing = sorted(targets - set(status))
     if missing:
@@ -75,7 +94,7 @@ async def run_scan(cfg: Config, smap: SelectorMap, months_ahead: int | None = No
             )
 
         if cfg.api.usable:
-            source = ApiSource(cfg.api, session.context.request)
+            source = ApiSource(cfg.api, session.context.request, cfg.target.zone_patterns)
         else:
             source = DomSource(flow, smap)
         log.info("조회 경로: %s", source.name)

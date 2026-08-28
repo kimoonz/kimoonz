@@ -59,3 +59,13 @@ def test_templatize_url_variants():
     )
     assert templatize_url("https://x/a/2026-10") == "https://x/a/{year}-{month02}"
     assert templatize_url("https://x/plain") == "https://x/plain"
+
+
+def test_guess_mapping_finds_zone_field():
+    payload = {"list": [{"rsvDate": "20261003", "roomNm": "캐빈", "zoneCd": "C", "restCnt": 1}]}
+    guess = guess_mapping("https://x/a", payload)
+    assert guess["zone_field"] == "zoneCd"
+
+
+def test_guess_mapping_leaves_zone_field_empty_when_absent():
+    assert guess_mapping("https://x/a", PAYLOAD)["zone_field"] == ""

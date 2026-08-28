@@ -112,3 +112,78 @@ def test_survival_ignores_close_without_matching_open(tmp_path):
     with TrackerStore(tmp_path / "t.db") as store:
         store.record_events([Change(ChangeKind.CLOSED, slot(available=False), None, T0)])
         assert store.survival_times() == []
+
+
+def test_zone_is_persisted_in_state_and_events(tmp_path):
+    from paradogo.inventory import Slot
+
+    db = tmp_path / "t.db"
+    zoned = Slot("2026-10-03", "C구역 프리미엄 캐빈", True, zone="C")
+    with TrackerStore(db) as store:
+        store.save_state(snap([zoned]))
+        store.record_events([Change(ChangeKind.OPENED, zoned, None, T0)])
+    with TrackerStore(db) as store:
+        assert store.load_state().slots[0].zone == "C"
+        assert store.cancellation_by_zone() == [("C", 1)]
+
+
+def test_cancellation_by_zone_labels_unknown(tmp_path):
+    with TrackerStore(tmp_path / "t.db") as store:
+        store.record_events(
+            [
+                Change(ChangeKind.OPENED, slot(cabin="이름없음"), None, T0),
+                Change(ChangeKind.OPENED, Slot("2026-10-04", "D캐빈", True, zone="D"), None, T0),
+            ]
+        )
+        assert store.cancellation_by_zone() == [("D", 1), ("미상", 1)]
+
+
+def test_old_database_without_zone_column_still_opens(tmp_path):
+    # 구역 기능 이전에 만들어진 DB 를 열어도 죽지 않아야 한다.
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE state (
+            stay_date TEXT NOT NULL, cabin TEXT NOT NULL, available INTEGER NOT NULL,
+            remaining INTEGER, price TEXT NOT NULL DEFAULT '',
+            first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, last_change TEXT,
+            PRIMARY KEY (stay_date, cabin));
+        CREATE TABLE events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, stay_date TEXT NOT NULL,
+            cabin TEXT NOT NULL, kind TEXT NOT NULL, remaining INTEGER,
+            price TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '');
+        """
+    )
+    conn.execute(
+        "INSERT INTO state VALUES ('2026-10-03','캐빈 A',1,NULL,'',"
+        "'2026-10-01T09:00:00+09:00','2026-10-01T09:00:00+09:00',NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    with TrackerStore(db) as store:
+        restored = store.load_state()
+        assert restored.slots[0].cabin == "캐빈 A"
+        assert restored.slots[0].zone == ""
+        store.record_events([Change(ChangeKind.OPENED, slot(), None, T0)])
+        assert store.counts()["opened"] == 1
+
+
+def test_broken_timestamp_does_not_break_state_loading(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "t.db"
+    with TrackerStore(db) as store:
+        store.save_state(snap([slot()]))
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE state SET last_seen = 'garbage'")
+    conn.commit()
+    conn.close()
+
+    with TrackerStore(db) as store:
+        restored = store.load_state()
+    assert restored is not None
+    assert restored.slots[0].cabin == "캐빈 A"

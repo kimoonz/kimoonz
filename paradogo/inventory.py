@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
+from .zones import ZonePreference
+
 # 달력 DOM만 읽어 캐빈 구분 없이 날짜 단위로만 볼 때 쓰는 이름.
 DATE_ONLY_CABIN = "(달력)"
 
@@ -47,15 +49,21 @@ class Slot:
     available: bool
     remaining: int | None = None  # 잔여 수량을 주는 사이트에서만 채워진다
     price: str = ""
+    zone: str = ""  # 구역 A~H. 못 읽으면 빈 문자열
 
     @property
     def key(self) -> tuple[str, str]:
         return (self.stay_date, self.cabin)
 
+    @property
+    def zone_label(self) -> str:
+        return f"{self.zone}구역" if self.zone else "구역미상"
+
     def __str__(self) -> str:
         mark = "예약가능" if self.available else "마감"
         rest = f" (잔여 {self.remaining})" if self.remaining is not None else ""
-        return f"{self.stay_date} {self.cabin} — {mark}{rest}"
+        zone = f"[{self.zone}] " if self.zone else ""
+        return f"{self.stay_date} {zone}{self.cabin} — {mark}{rest}"
 
 
 @dataclass(slots=True)
@@ -172,14 +180,17 @@ class TargetFilter:
 
     dates: frozenset[str] = frozenset()      # 비우면 모든 날짜
     cabin_keywords: tuple[str, ...] = ()     # 비우면 모든 캐빈
+    zones: ZonePreference = field(default_factory=ZonePreference)
 
     def matches(self, slot: Slot) -> bool:
         if self.dates and slot.stay_date not in self.dates:
             return False
-        # 달력만 읽는 폴백 모드에서는 캐빈을 알 수 없으므로 캐빈 조건을 적용하지 않는다.
-        # (여기서 걸러버리면 취소를 통째로 놓친다. 어떤 캐빈인지는 들어가서 확인한다.)
+        # 달력만 읽는 폴백 모드에서는 캐빈·구역을 알 수 없으므로 조건을 적용하지 않는다.
+        # (여기서 걸러버리면 취소를 통째로 놓친다. 무엇인지는 들어가서 확인한다.)
         if slot.cabin == DATE_ONLY_CABIN:
             return True
+        if not self.zones.allows(slot.zone):
+            return False
         if self.cabin_keywords and not any(k in slot.cabin for k in self.cabin_keywords):
             return False
         return True

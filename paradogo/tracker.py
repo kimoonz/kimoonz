@@ -31,6 +31,7 @@ from .notify import Notifier
 from .selectors import SelectorMap
 from .sources import ApiSource, DomSource, SourceError
 from .store import TrackerStore
+from .zones import ZonePreference
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,9 @@ class Tracker:
         self.targets = TargetFilter(
             dates=frozenset(d.isoformat() for d in cfg.target.check_in_dates),
             cabin_keywords=tuple(cfg.target.cabin_types),
+            zones=ZonePreference.build(
+                cfg.target.zones, cfg.target.exclude_zones, cfg.target.zone_strict
+            ),
         )
         self._cooldown: dict[tuple[str, str], datetime] = {}
         self._recent: list[Change] = []
@@ -132,9 +136,11 @@ class Tracker:
             title = "⚠️ 취소표를 잡지 못했습니다"
         body = [result.message]
         if result.stay_date:
-            body.append(f"날짜: {result.stay_date}")
+            nights = f" ({result.nights}박)" if result.nights else ""
+            body.append(f"날짜: {result.stay_date}{nights}")
         if result.cabin:
-            body.append(f"캐빈: {result.cabin}")
+            zone = f"[{result.zone}] " if result.zone else ""
+            body.append(f"캐빈: {zone}{result.cabin}")
         self.notifier.send(
             title, "\n".join(body), screenshot=result.screenshot, url=result.url
         )
@@ -148,7 +154,7 @@ class Tracker:
         await flow.ensure_logged_in()
 
         if cfg.api.usable:
-            source = ApiSource(cfg.api, session.context.request)
+            source = ApiSource(cfg.api, session.context.request, cfg.target.zone_patterns)
             log.info("재고 조회 경로: API (%s)", cfg.api.url_template)
         else:
             source = DomSource(flow, self.smap)
@@ -172,6 +178,10 @@ class Tracker:
                 [
                     f"대상 날짜: {', '.join(sorted(self.targets.dates)) or '전체'}",
                     f"희망 캐빈: {', '.join(self.targets.cabin_keywords) or '전체'}",
+                    f"희망 구역: {', '.join(self.targets.zones.wanted) or '전체'}"
+                    + (f" (제외 {', '.join(sorted(self.targets.zones.excluded))})"
+                       if self.targets.zones.excluded else ""),
+                    f"박수: {', '.join(f'{n}박' for n in cfg.target.nights_options)}",
                     f"조회 경로: {source.name} · 주기 {interval:.0f}초",
                     f"추적 범위: {', '.join(f'{y}-{m:02d}' for y, m in months)}",
                     f"취소 감지 시 자동 진행: {'예(결제 직전까지)' if track.auto_reserve else '아니오(알림만)'}",
@@ -282,16 +292,21 @@ class Tracker:
                 result = await flow.attempt([date.fromisoformat(change.slot.stay_date)])
             except Exception as exc:
                 log.warning("확보 시도 중 오류: %s", exc)
-                self.store.record_attempt(change.stay_date, change.cabin, "error", str(exc))
+                self.store.record_attempt(
+                    change.stay_date, change.cabin, "error", str(exc), change.slot.zone
+                )
                 last = BookingResult(
                     ok=False,
                     stage="failed",
                     message=f"취소표를 잡으러 갔지만 오류가 났습니다: {exc}",
                     stay_date=change.stay_date,
                     cabin=change.cabin,
+                    zone=change.slot.zone,
                 )
                 continue
-            self.store.record_attempt(change.stay_date, change.cabin, result.stage, result.message)
+            self.store.record_attempt(
+                change.stay_date, change.cabin, result.stage, result.message, change.slot.zone
+            )
             last = result
             if result.ok:
                 return result

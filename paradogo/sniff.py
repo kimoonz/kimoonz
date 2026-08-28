@@ -30,6 +30,7 @@ _CABIN_KEY_HINTS = ("name", "nm", "room", "type", "title", "prod", "goods")
 _REMAIN_KEY_HINTS = ("rest", "remain", "cnt", "qty", "stock", "avail", "possible")
 _STATUS_KEY_HINTS = ("status", "state", "stat", "yn", "flag", "sale", "code")
 _PRICE_KEY_HINTS = ("price", "amt", "amount", "fee", "cost", "won")
+_ZONE_KEY_HINTS = ("zone", "area", "block", "sect", "구역", "존")
 
 MAX_BODY_BYTES = 400_000
 
@@ -111,6 +112,7 @@ def guess_mapping(url: str, payload: Any) -> dict[str, Any] | None:
         "items_path": path,
         "date_field": date_field,
         "cabin_field": _pick_key(item, _CABIN_KEY_HINTS, lambda v: isinstance(v, str)),
+        "zone_field": _pick_key(item, _ZONE_KEY_HINTS, lambda v: isinstance(v, (str, int))),
         "remaining_field": remaining_field,
         "price_field": _pick_key(item, _PRICE_KEY_HINTS),
         "status_field": status_field,

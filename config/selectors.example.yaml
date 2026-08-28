@@ -73,6 +73,19 @@ booking:
     - ".soldout"
     - ".disabled"
     - "text=마감"
+  # --- 박수(1박/2박) 지정. 아래 3가지를 순서대로 시도합니다 ---
+  # 1) 박수 선택 박스가 있으면 그것
+  nights_select:
+    - "select[name='nights']"
+    - "select[name='night']"
+  # 2) '{nights}박' 버튼이 있으면 그것
+  nights_button:
+    - "text={nights}박"
+    - "button[data-nights='{nights}']"
+  # 3) 둘 다 없으면 체크아웃 날짜 칸을 누릅니다(체크인+박수 일자).
+  #    보통 day_cell 과 같은 셀렉터라 비워두면 day_cell 을 그대로 씁니다.
+  checkout_cell: []
+
   # 날짜 선택 후 눌러야 하는 조회 버튼(없으면 비워두세요)
   search_button:
     - "text=조회하기"
@@ -90,6 +103,11 @@ booking:
   room_price:
     - ".price"
     - ".won"
+  # 구역(A~H)을 따로 보여주는 요소가 있으면 지정하세요.
+  # 비워두면 캐빈 이름에서 'A구역' 'A동' 'A-03' 같은 표기를 찾아 씁니다.
+  room_zone:
+    - ".zone"
+    - ".area"
   room_soldout_marker:
     - "text=마감"
     - "text=예약불가"

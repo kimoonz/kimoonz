@@ -118,10 +118,44 @@ export SMTP_PASS='앱 비밀번호'     # Gmail 일반 비밀번호 아님
 
 | 항목 | 설명 |
 | --- | --- |
+| `site.base_url` | 파라다이스 **공식 홈페이지**(`www.paradisespa.co.kr`). 제휴/재판매 사이트가 아닙니다 |
 | `site.login_path` / `site.booking_path` | **실제 사이트 주소창을 보고 채워야 합니다** |
 | `target.check_in_dates` | 잡고 싶은 체크인 날짜, 우선순위 순 |
+| `target.nights_options` | 몇 박으로 잡을지, 우선순위 순. 예: `[2, 1]` |
+| `target.zones` / `exclude_zones` | 구역 A~H 우선순위 / 제외 |
 | `target.cabin_types` | 희망 캐빈 이름(부분 일치). 비우면 아무거나 |
 | `run.dry_run` | `true` 면 빈자리만 확인하고 예약 버튼을 누르지 않음 |
+
+### 무엇을 잡을지 — 박수와 구역
+
+```yaml
+target:
+  check_in_dates: ["2026-10-03", "2026-10-04"]   # 날짜 우선순위
+  nights_options: [2, 1]        # 2박 먼저, 안 되면 1박
+  zones: ["C", "D"]             # C구역 먼저, 없으면 D구역
+  exclude_zones: ["A"]          # A구역은 절대 안 잡음
+  cabin_types: ["프리미엄"]      # 캐빈 이름 부분 일치
+```
+
+**날짜 → 박수 → 구역 → 캐빈** 순으로 우선순위를 훑어 첫 성공에서 멈춥니다.
+`[2, 1]` 이면 2박으로 먼저 조회하고, 그 조건에 자리가 없으면 같은 날짜를 1박으로 다시 봅니다.
+
+박수는 사이트 방식에 따라 세 가지를 순서대로 시도합니다.
+① 박수 선택 박스(`booking.nights_select`) → ② `{nights}박` 버튼(`booking.nights_button`)
+→ ③ **체크아웃 날짜 칸 클릭**(체크인 + 박수 일자). 국내 예약 달력은 대개 ③입니다.
+
+구역은 `A구역` `구역 A` `A존` `A동` `A-03` `캐빈 A` 같은 표기를 자동 인식합니다.
+표기가 특이하면 `target.zone_pattern` 에 정규식을 직접 주거나(캡처 그룹 1번이 구역),
+`selectors.yaml` 의 `booking.room_zone` 으로 구역이 적힌 요소를 지정하면 됩니다.
+API가 구역을 따로 준다면 `api.zone_field` 를 쓰세요.
+
+> **구역이 제대로 읽히는지는 `scan` 으로 먼저 확인하세요.** 출력 끝에
+> `구역 인식 결과: A 31칸, C 31칸 …` 이 나옵니다. 전부 `미상` 이면 `zones` 설정이
+> 아무 효과도 내지 못합니다.
+>
+> 구역을 못 읽은 캐빈은 기본적으로 **예약 후보에서 제외**됩니다(`zone_strict: true`).
+> 엉뚱한 구역을 잡아 결제 화면까지 가는 것보다 낫기 때문입니다. 취소 **알림**은
+> 그대로 오므로 기회를 놓치지는 않습니다.
 
 ### 로그인이 자동으로 안 될 때
 
@@ -235,6 +269,12 @@ python -m paradogo stats
   → 가장 빨리 사라진 게 38초. 폴링 주기를 그보다 짧게 두어야 잡을 수 있습니다.
 ```
 
+```
+구역별 취소 발생
+  C구역  9건
+  A구역  2건
+```
+
 `watch` 는 상태를 기억하지 않고 매번 새로 확인만 하는 예전 방식입니다.
 보통은 `track` 을 쓰세요.
 
@@ -262,6 +302,8 @@ python -m paradogo stats
 | 로그인 실패 | 캡차·본인확인 단계가 있으면 자동 로그인은 불가. `login` 을 `--headful` 로 돌려 직접 로그인한 뒤 세션을 저장하세요 |
 | 날짜를 못 찾음 | `booking.day_cell` 의 placeholder 확인. `{date}` `{day}` `{day_int}` `{compact}` 중 실제 DOM에 맞는 것 |
 | 결제 페이지 판정 실패 | `payment.marker` 를 결제 화면에만 있는 텍스트/요소로 바꾸세요 |
+| 구역이 전부 `미상` | `scan` 의 '구역 인식 결과' 확인 → `target.zone_pattern` 또는 `booking.room_zone` 지정 |
+| 2박이 안 잡힘 | `booking.checkout_cell`(또는 `nights_select` / `nights_button`) 확인. 로그에 "체크아웃 …를 눌러 N박으로 맞췄습니다" 가 찍히는지 보세요 |
 | 알림이 안 옴 | `python -m paradogo notify-test` 로 채널부터 확인 |
 | `scan` 이 아무것도 못 찾음 | 셀렉터/`api` 설정 문제. 여기서 안 되면 `track`·`snipe` 도 안 됩니다 |
 | 추적이 조용함 | `stats` 의 폴링 성공률을 보세요. 낮으면 취소가 없는 게 아니라 조회가 실패 중입니다 |
@@ -285,6 +327,7 @@ paradogo/
   store.py      추적 이력 (SQLite): 현재 상태 · 전환 로그 · 폴링 건강도
   tracker.py    실시간 추적 루프 + 취소 확보
   dashboard.py  터미널 달력 대시보드
+  zones.py      구역(A~H) 인식과 우선순위
   scan.py       읽기 전용 조회
   sniff.py      재고 API 찾기
   watcher.py    단순 반복 확인 (구방식)
@@ -307,4 +350,7 @@ python -m pytest
 * 추적: 전부 마감인 상태에서 시작 → 특정 캐빈에 취소를 인위적으로 발생시킴 →
   다음 폴링에서 `취소 발생` 감지 → 확보 → 결제 페이지 도달
 * 조회: API 경로(날짜×캐빈, 잔여 수량)와 달력 DOM 폴백(날짜 단위) 양쪽
-* `sniff`: 목업의 XHR을 엿들어 재고 API와 응답 구조를 자동 추출
+* 구역·박수: A구역 제외 + C/D 우선 설정으로, A구역 취소는 알림만 하고 건너뛴 뒤
+  C구역 취소를 2박(체크아웃 날짜 클릭)으로 확보. 2박 자리가 없는 구역에서는
+  1박으로 폴백해 확보하는 것까지 확인
+* `sniff`: 목업의 XHR을 엿들어 재고 API와 응답 구조(구역 필드 포함)를 자동 추출

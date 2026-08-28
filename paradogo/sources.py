@@ -21,6 +21,7 @@ from .config import ApiConfig
 from .errors import ParadogoError
 from .inventory import DATE_ONLY_CABIN, Slot, Snapshot, normalize_date
 from .selectors import SelectorMap, first_nonempty
+from .zones import extract_zone
 
 log = logging.getLogger(__name__)
 
@@ -83,8 +84,15 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
-def slots_from_items(cfg: ApiConfig, items: list[dict[str, Any]]) -> list[Slot]:
-    """API 응답의 항목 목록을 Slot 목록으로 옮긴다."""
+def slots_from_items(
+    cfg: ApiConfig,
+    items: list[dict[str, Any]],
+    zone_patterns: tuple[str, ...] | None = None,
+) -> list[Slot]:
+    """API 응답의 항목 목록을 Slot 목록으로 옮긴다.
+
+    구역은 전용 필드(``api.zone_field``)가 있으면 그걸 쓰고, 없으면 캐빈 이름에서 뽑는다.
+    """
     slots: list[Slot] = []
     for item in items:
         if not isinstance(item, dict):
@@ -107,13 +115,20 @@ def slots_from_items(cfg: ApiConfig, items: list[dict[str, Any]]) -> list[Slot]:
             # 판정 근거가 없으면 '목록에 있으면 예약 가능'으로 본다.
             available = True
 
+        cabin_name = cabin.strip() or DATE_ONLY_CABIN
+        if cfg.zone_field:
+            zone = extract_zone(_render_field(item, cfg.zone_field), zone_patterns) or ""
+        else:
+            zone = extract_zone(cabin_name, zone_patterns)
+
         slots.append(
             Slot(
                 stay_date=stay_date,
-                cabin=cabin.strip() or DATE_ONLY_CABIN,
+                cabin=cabin_name,
                 available=available,
                 remaining=remaining,
                 price=_render_field(item, cfg.price_field) if cfg.price_field else "",
+                zone=zone,
             )
         )
     return slots
@@ -122,9 +137,15 @@ def slots_from_items(cfg: ApiConfig, items: list[dict[str, Any]]) -> list[Slot]:
 class ApiSource:
     name = "api"
 
-    def __init__(self, cfg: ApiConfig, request_context: Any) -> None:
+    def __init__(
+        self,
+        cfg: ApiConfig,
+        request_context: Any,
+        zone_patterns: tuple[str, ...] | None = None,
+    ) -> None:
         self.cfg = cfg
         self.request = request_context  # Playwright APIRequestContext (쿠키 공유)
+        self.zone_patterns = zone_patterns
 
     async def fetch(self, months: list[tuple[int, int]]) -> Snapshot:
         collected: list[Slot] = []
@@ -157,7 +178,7 @@ class ApiSource:
                 items = list(items.values())
             if not isinstance(items, list):
                 raise SourceError(f"items_path 가 가리키는 값이 목록이 아닙니다: {type(items)}")
-            collected.extend(slots_from_items(self.cfg, items))
+            collected.extend(slots_from_items(self.cfg, items, self.zone_patterns))
 
         return Snapshot(taken_at=now_kst(), slots=tuple(collected), source=self.name)
 

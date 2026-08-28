@@ -122,10 +122,23 @@ class TargetConfig:
     """무엇을 잡고 싶은지."""
 
     check_in_dates: list[date] = field(default_factory=list)
-    nights: int = 1
+    nights_options: list[int] = field(default_factory=lambda: [1])  # 우선순위 순서
     cabin_types: list[str] = field(default_factory=list)  # 우선순위 순서. 비우면 아무 캐빈이나.
+    zones: list[str] = field(default_factory=list)         # 구역 A~H, 우선순위 순서
+    exclude_zones: list[str] = field(default_factory=list)
+    zone_pattern: str = ""       # 구역 표기가 특이할 때 쓰는 정규식(캡처 그룹 1번)
+    zone_strict: bool = True     # 구역을 못 읽은 캐빈은 예약 후보에서 뺀다
     adults: int = 2
     children: int = 0
+
+    @property
+    def nights(self) -> int:
+        """1순위 박수. 기존 설정과의 호환을 위해 남겨 둔다."""
+        return self.nights_options[0] if self.nights_options else 1
+
+    @property
+    def zone_patterns(self) -> tuple[str, ...] | None:
+        return (self.zone_pattern,) if self.zone_pattern else None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "TargetConfig":
@@ -146,10 +159,41 @@ class TargetConfig:
         cabins = raw.get("cabin_types") or []
         if isinstance(cabins, str):
             cabins = [cabins]
+
+        # nights_options 가 있으면 그것을, 없으면 기존 nights 한 값을 쓴다.
+        raw_nights = raw.get("nights_options")
+        if raw_nights is None:
+            raw_nights = [raw.get("nights", 1)]
+        elif isinstance(raw_nights, (int, str)):
+            raw_nights = [raw_nights]
+        nights: list[int] = []
+        for value in raw_nights:
+            try:
+                count = int(value)
+            except (TypeError, ValueError):
+                raise ConfigError(f"target.nights_options 의 '{value}' 는 숫자가 아닙니다.")
+            if count < 1:
+                raise ConfigError("target.nights_options 는 1 이상이어야 합니다.")
+            if count not in nights:
+                nights.append(count)
+        if not nights:
+            nights = [1]
+
+        zones = raw.get("zones") or []
+        if isinstance(zones, str):
+            zones = [zones]
+        excluded = raw.get("exclude_zones") or []
+        if isinstance(excluded, str):
+            excluded = [excluded]
+
         return cls(
             check_in_dates=sorted(set(parsed)),
-            nights=int(raw.get("nights", 1)),
+            nights_options=nights,
             cabin_types=[str(c) for c in cabins],
+            zones=[str(z) for z in zones],
+            exclude_zones=[str(z) for z in excluded],
+            zone_pattern=str(raw.get("zone_pattern") or ""),
+            zone_strict=bool(raw.get("zone_strict", True)),
             adults=int(raw.get("adults", 2)),
             children=int(raw.get("children", 0)),
         )
@@ -218,6 +262,7 @@ class ApiConfig:
     items_path: str = ""     # 응답에서 목록이 있는 경로. 'data.list' 처럼 점으로 구분
     date_field: str = "date"     # 필드명, 또는 '{y}-{m}-{d}' 같은 템플릿
     cabin_field: str = ""        # 비우면 날짜 단위로만 추적
+    zone_field: str = ""         # 구역을 따로 주는 API 라면 그 필드명
     remaining_field: str = ""
     price_field: str = ""
     status_field: str = ""
@@ -242,6 +287,7 @@ class ApiConfig:
             items_path=str(raw.get("items_path") or ""),
             date_field=str(raw.get("date_field") or "date"),
             cabin_field=str(raw.get("cabin_field") or ""),
+            zone_field=str(raw.get("zone_field") or ""),
             remaining_field=str(raw.get("remaining_field") or ""),
             price_field=str(raw.get("price_field") or ""),
             status_field=str(raw.get("status_field") or ""),

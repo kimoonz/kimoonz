@@ -13,12 +13,13 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from .browser import BrowserSession
 from .config import Config
 from .errors import LoginFailed, SelectorNotFound
+from .zones import ZonePreference, extract_zone
 from .selectors import (
     SelectorMap,
     click,
@@ -41,10 +42,13 @@ class Offer:
     name: str
     price: str = ""
     stay_date: str = ""
+    zone: str = ""
+    nights: int = 1
 
     def __str__(self) -> str:
         price = f" / {self.price}" if self.price else ""
-        return f"{self.stay_date} {self.name}{price}"
+        zone = f"[{self.zone}] " if self.zone else ""
+        return f"{self.stay_date} {self.nights}박 {zone}{self.name}{price}"
 
 
 @dataclass(slots=True)
@@ -54,6 +58,8 @@ class BookingResult:
     message: str
     stay_date: str | None = None
     cabin: str | None = None
+    zone: str | None = None
+    nights: int | None = None
     url: str | None = None
     screenshot: Path | None = None
 
@@ -86,6 +92,9 @@ class BookingFlow:
         self.session = session
         self.smap = smap
         self.cfg = cfg
+        self.zones = ZonePreference.build(
+            cfg.target.zones, cfg.target.exclude_zones, cfg.target.zone_strict
+        )
 
     @property
     def page(self):
@@ -223,9 +232,8 @@ class BookingFlow:
 
         log.warning("달 이동 상한(%d회)에 도달했습니다.", max_clicks)
 
-    async def select_date(self, stay_date: date) -> bool:
-        """해당 날짜 칸을 누른다. 매진/비활성이면 False."""
-        fmt = {
+    def _date_placeholders(self, stay_date: date) -> dict[str, object]:
+        return {
             "date": stay_date.isoformat(),
             "year": stay_date.year,
             "month": f"{stay_date.month:02d}",
@@ -233,41 +241,103 @@ class BookingFlow:
             "day_int": stay_date.day,
             "compact": stay_date.strftime("%Y%m%d"),
         }
+
+    async def _click_day(self, key: str, stay_date: date, check_soldout: bool) -> bool:
+        """달력에서 해당 날짜 칸을 누른다. 없거나 매진이면 False."""
+        fmt = self._date_placeholders(stay_date)
         cell = await first_visible(
-            self.page, self.smap, "booking.day_cell", timeout_ms=5000, required=False, **fmt
+            self.page, self.smap, key, timeout_ms=5000, required=False, **fmt
         )
         if cell is None:
             log.info("%s 날짜 칸을 찾지 못했습니다(아직 오픈 전일 수 있음).", stay_date)
             return False
-
-        if await is_present(cell, self.smap, "booking.day_soldout_marker", timeout_ms=400):
+        if check_soldout and await is_present(
+            cell, self.smap, "booking.day_soldout_marker", timeout_ms=400
+        ):
             log.info("%s 은(는) 매진 표시가 있습니다.", stay_date)
             return False
-
         try:
             await cell.click()
         except Exception as exc:
             log.info("%s 날짜 클릭 실패(비활성 추정): %s", stay_date, exc)
             return False
+        await self.page.wait_for_timeout(300)
+        return True
 
-        await self.page.wait_for_timeout(400)
+    async def _apply_nights(self, check_in: date, nights: int) -> bool:
+        """박수를 지정한다. 사이트마다 방식이 달라 세 가지를 순서대로 시도한다.
+
+        1) 박수 선택 박스(select)  2) '{nights}박' 버튼  3) 체크아웃 날짜 칸 클릭
+        """
+        selector = await first_visible(
+            self.page, self.smap, "booking.nights_select", timeout_ms=1500, required=False
+        )
+        if selector is not None:
+            for attempt_fn in (
+                lambda: selector.select_option(label=f"{nights}박"),
+                lambda: selector.select_option(value=str(nights)),
+                lambda: selector.select_option(str(nights)),
+            ):
+                try:
+                    await attempt_fn()
+                    log.info("박수 선택 박스에서 %d박을 골랐습니다.", nights)
+                    return True
+                except Exception:
+                    continue
+            log.info("박수 선택 박스는 있으나 %d박 옵션을 고르지 못했습니다.", nights)
+
+        button = await first_visible(
+            self.page, self.smap, "booking.nights_button", timeout_ms=1200,
+            required=False, nights=nights,
+        )
+        if button is not None:
+            await button.click()
+            await self.page.wait_for_timeout(300)
+            log.info("%d박 버튼을 눌렀습니다.", nights)
+            return True
+
+        # 대부분의 국내 예약 달력은 체크인·체크아웃 두 날짜를 찍는 방식이다.
+        check_out = check_in + timedelta(days=nights)
+        key = (
+            "booking.checkout_cell"
+            if self.smap.has("booking.checkout_cell")
+            else "booking.day_cell"
+        )
+        if await self._click_day(key, check_out, check_soldout=False):
+            log.info("체크아웃 %s 를 눌러 %d박으로 맞췄습니다.", check_out, nights)
+            return True
+
+        if nights == 1:
+            # 1박이 기본값인 사이트가 많다. 별도 조작이 없어도 정상일 수 있다.
+            log.debug("박수 조작 없이 1박 기본값으로 진행합니다.")
+            return True
+        log.warning("%d박을 지정할 방법을 찾지 못했습니다(체크아웃 칸/선택 박스 없음).", nights)
+        return False
+
+    async def select_stay(self, check_in: date, nights: int = 1) -> bool:
+        """체크인 날짜와 박수를 골라 캐빈 목록이 뜨는 상태까지 만든다."""
+        if not await self._click_day("booking.day_cell", check_in, check_soldout=True):
+            return False
+        if not await self._apply_nights(check_in, nights):
+            return False
+
         search = await first_visible(
             self.page, self.smap, "booking.search_button", timeout_ms=1500, required=False
         )
         if search is not None:
             await search.click()
-            await self.page.wait_for_timeout(600)
+        await self.page.wait_for_timeout(600)
         return True
 
-    async def list_offers(self, stay_date: date) -> list[Offer]:
+    async def list_offers(self, stay_date: date, nights: int = 1) -> list[Offer]:
         """현재 화면에서 예약 가능한 캐빈 목록을 읽는다."""
         cards = await first_nonempty(self.page, self.smap, "booking.room_card", required=False)
         if cards is None:
             return []
 
+        patterns = self.cfg.target.zone_patterns
         offers: list[Offer] = []
-        total = await cards.count()
-        for i in range(total):
+        for i in range(await cards.count()):
             card = cards.nth(i)
             if await is_present(card, self.smap, "booking.room_soldout_marker", timeout_ms=250):
                 continue
@@ -280,35 +350,67 @@ class BookingFlow:
             price_loc = await first_visible(
                 card, self.smap, "booking.room_price", timeout_ms=300, required=False
             )
+            zone_loc = await first_visible(
+                card, self.smap, "booking.room_zone", timeout_ms=300, required=False
+            )
             name = (await name_loc.inner_text()).strip() if name_loc else f"캐빈 #{i + 1}"
             price = (await price_loc.inner_text()).strip() if price_loc else ""
+            name = " ".join(name.split())
+            # 구역 전용 요소가 있으면 그쪽이 정확하다. 없으면 캐빈 이름에서 뽑는다.
+            if zone_loc is not None:
+                zone = extract_zone(" ".join((await zone_loc.inner_text()).split()), patterns)
+            else:
+                zone = extract_zone(name, patterns)
             offers.append(
                 Offer(
                     index=i,
-                    name=" ".join(name.split()),
+                    name=name,
                     price=" ".join(price.split()),
                     stay_date=stay_date.isoformat(),
+                    zone=zone,
+                    nights=nights,
                 )
             )
         return offers
 
     def pick_offer(self, offers: list[Offer]) -> Offer | None:
-        """설정한 캐빈 우선순위대로 고른다. 목록이 비어 있으면 아무거나 첫 번째."""
+        """구역 우선순위 → 캐빈 우선순위 순으로 고른다.
+
+        구역을 못 읽은 캐빈은 zone_strict 가 켜져 있고 원하는 구역이 지정돼 있으면
+        고르지 않는다. 엉뚱한 구역을 잡아 결제 화면까지 가는 것보다 낫다.
+        """
         if not offers:
             return None
-        wanted = self.cfg.target.cabin_types
-        if not wanted:
-            return offers[0]
-        for keyword in wanted:
-            for offer in offers:
-                if keyword.strip() and keyword.strip() in offer.name:
-                    return offer
-        log.info(
-            "원하는 캐빈(%s)은 없고 %s 만 남아 있습니다.",
-            ", ".join(wanted),
-            ", ".join(o.name for o in offers),
+
+        allowed = [o for o in offers if self.zones.selectable(o.zone)]
+        if not allowed:
+            log.info(
+                "구역 조건(%s%s)에 맞는 캐빈이 없습니다. 화면에 있던 것: %s",
+                "원함 " + ",".join(self.zones.wanted) if self.zones.wanted else "",
+                " / 제외 " + ",".join(sorted(self.zones.excluded)) if self.zones.excluded else "",
+                ", ".join(f"{o.name}({o.zone or '구역미상'})" for o in offers),
+            )
+            return None
+
+        wanted = [k.strip() for k in self.cfg.target.cabin_types if k.strip()]
+
+        def cabin_rank(offer: Offer) -> int:
+            for index, keyword in enumerate(wanted):
+                if keyword in offer.name:
+                    return index
+            return len(wanted)
+
+        if wanted and all(cabin_rank(o) == len(wanted) for o in allowed):
+            log.info(
+                "원하는 캐빈(%s)은 없고 %s 만 남아 있습니다.",
+                ", ".join(wanted),
+                ", ".join(o.name for o in allowed),
+            )
+            return None
+
+        return min(
+            allowed, key=lambda o: (self.zones.rank(o.zone), cabin_rank(o), o.index)
         )
-        return None
 
     # ------------------------------------------------------------ 예약 진행
 
@@ -353,6 +455,14 @@ class BookingFlow:
 
         reached = await is_present(self.page, self.smap, "payment.marker", timeout_ms=8000)
         shot = await self.session.screenshot("payment-page" if reached else "before-payment")
+        common = dict(
+            stay_date=offer.stay_date,
+            cabin=offer.name,
+            zone=offer.zone,
+            nights=offer.nights,
+            url=self.page.url,
+            screenshot=shot,
+        )
         if reached:
             return BookingResult(
                 ok=True,
@@ -361,10 +471,7 @@ class BookingFlow:
                     "결제 페이지까지 진입했습니다. 브라우저 창에서 직접 결제를 완료하세요.\n"
                     "※ 결제 전까지는 예약이 확정되지 않습니다."
                 ),
-                stay_date=offer.stay_date,
-                cabin=offer.name,
-                url=self.page.url,
-                screenshot=shot,
+                **common,
             )
         return BookingResult(
             ok=False,
@@ -373,65 +480,72 @@ class BookingFlow:
                 "예약자 정보까지는 넘어갔지만 결제 페이지 표식(payment.marker)을 찾지 못했습니다. "
                 "브라우저 창을 직접 확인하세요."
             ),
-            stay_date=offer.stay_date,
-            cabin=offer.name,
-            url=self.page.url,
-            screenshot=shot,
+            **common,
         )
 
     # ------------------------------------------------------------ 한 번의 시도
 
-    async def attempt(self, stay_dates: list[date] | None = None) -> BookingResult:
-        """설정된 날짜들을 순서대로 훑어 첫 성공에서 멈춘다."""
+    async def attempt(
+        self,
+        stay_dates: list[date] | None = None,
+        nights_options: list[int] | None = None,
+    ) -> BookingResult:
+        """설정된 날짜 × 박수를 우선순위대로 훑어 첫 성공에서 멈춘다."""
         dates = stay_dates or self.cfg.target.check_in_dates
+        nights_list = nights_options or self.cfg.target.nights_options or [1]
         seen: list[str] = []
 
         for stay_date in dates:
-            await self.ensure_month(stay_date.year, stay_date.month)
-            if not await self.select_date(stay_date):
-                continue
-            offers = await self.list_offers(stay_date)
-            if not offers:
-                log.info("%s: 예약 가능한 캐빈이 없습니다.", stay_date)
-                continue
-            seen.extend(str(o) for o in offers)
-            chosen = self.pick_offer(offers)
-            if chosen is None:
-                continue
+            for nights in nights_list:
+                await self.ensure_month(stay_date.year, stay_date.month)
+                if not await self.select_stay(stay_date, nights):
+                    continue
+                offers = await self.list_offers(stay_date, nights)
+                if not offers:
+                    log.info("%s %d박: 예약 가능한 캐빈이 없습니다.", stay_date, nights)
+                    continue
+                seen.extend(str(o) for o in offers)
+                chosen = self.pick_offer(offers)
+                if chosen is None:
+                    continue
 
-            log.info("빈자리 발견: %s", chosen)
-            if self.cfg.run.dry_run:
-                shot = await self.session.screenshot("dry-run-found")
-                return BookingResult(
-                    ok=True,
-                    stage="dry_run",
-                    message=(
-                        f"[모의 실행] 빈자리를 찾았지만 dry_run=true 라 예약을 진행하지 않았습니다.\n"
-                        f"발견 목록:\n- " + "\n- ".join(seen)
-                    ),
-                    stay_date=chosen.stay_date,
-                    cabin=chosen.name,
-                    url=self.page.url,
-                    screenshot=shot,
-                )
-            try:
-                return await self.reserve(chosen)
-            except SelectorNotFound as exc:
-                shot = await self.session.screenshot("reserve-selector-missing")
-                return BookingResult(
-                    ok=False,
-                    stage="failed",
-                    message=f"예약 진행 중 셀렉터 문제: {exc}",
-                    stay_date=chosen.stay_date,
-                    cabin=chosen.name,
-                    url=self.page.url,
-                    screenshot=shot,
-                )
+                log.info("빈자리 발견: %s", chosen)
+                if self.cfg.run.dry_run:
+                    shot = await self.session.screenshot("dry-run-found")
+                    return BookingResult(
+                        ok=True,
+                        stage="dry_run",
+                        message=(
+                            "[모의 실행] 빈자리를 찾았지만 dry_run=true 라 예약을 진행하지 "
+                            "않았습니다.\n발견 목록:\n- " + "\n- ".join(seen)
+                        ),
+                        stay_date=chosen.stay_date,
+                        cabin=chosen.name,
+                        zone=chosen.zone,
+                        nights=chosen.nights,
+                        url=self.page.url,
+                        screenshot=shot,
+                    )
+                try:
+                    return await self.reserve(chosen)
+                except SelectorNotFound as exc:
+                    shot = await self.session.screenshot("reserve-selector-missing")
+                    return BookingResult(
+                        ok=False,
+                        stage="failed",
+                        message=f"예약 진행 중 셀렉터 문제: {exc}",
+                        stay_date=chosen.stay_date,
+                        cabin=chosen.name,
+                        zone=chosen.zone,
+                        nights=chosen.nights,
+                        url=self.page.url,
+                        screenshot=shot,
+                    )
 
         return BookingResult(
             ok=False,
             stage="no_availability",
-            message="설정한 날짜 중 예약 가능한 캐빈이 없습니다."
+            message="설정한 날짜·박수 중 예약 가능한 캐빈이 없습니다."
             + (f"\n화면에서 본 항목: {', '.join(seen)}" if seen else ""),
         )
 

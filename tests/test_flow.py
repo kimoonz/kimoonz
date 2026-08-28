@@ -10,8 +10,17 @@ BASE = {
 }
 
 
-def make_flow(cabin_types):
-    raw = {**BASE, "target": {"check_in_dates": ["2026-10-03"], "cabin_types": cabin_types}}
+def make_flow(cabin_types, zones=(), exclude_zones=(), zone_strict=True):
+    raw = {
+        **BASE,
+        "target": {
+            "check_in_dates": ["2026-10-03"],
+            "cabin_types": list(cabin_types),
+            "zones": list(zones),
+            "exclude_zones": list(exclude_zones),
+            "zone_strict": zone_strict,
+        },
+    }
     return BookingFlow(session=None, smap=None, cfg=Config.from_dict(raw))
 
 
@@ -72,9 +81,16 @@ def test_pick_offer_on_empty_list():
     assert make_flow([]).pick_offer([]) is None
 
 
-def test_offer_str_includes_date_and_price():
-    offer = Offer(index=0, name="캐빈 A", price="250,000원", stay_date="2026-10-03")
-    assert str(offer) == "2026-10-03 캐빈 A / 250,000원"
+def test_offer_str_includes_date_nights_zone_and_price():
+    offer = Offer(
+        index=0, name="캐빈 A", price="250,000원", stay_date="2026-10-03", zone="C", nights=2
+    )
+    assert str(offer) == "2026-10-03 2박 [C] 캐빈 A / 250,000원"
+
+
+def test_offer_str_without_zone():
+    offer = Offer(index=0, name="캐빈 A", stay_date="2026-10-03")
+    assert str(offer) == "2026-10-03 1박 캐빈 A"
 
 
 # --- 추적기 보조 로직 -------------------------------------------------------
@@ -156,3 +172,53 @@ def test_months_to_track_deduplicates_and_sorts():
 
     months = months_to_track(datetime(2026, 12, 1), [date(2026, 12, 25), date(2027, 1, 2)], 2)
     assert months == [(2026, 12), (2027, 1)]
+
+
+# --- 구역(A~H) 선택 ---------------------------------------------------------
+
+ZONED = [
+    Offer(index=0, name="A구역 스탠다드 캐빈", stay_date="2026-10-03", zone="A"),
+    Offer(index=1, name="C구역 프리미엄 캐빈", stay_date="2026-10-03", zone="C"),
+    Offer(index=2, name="D구역 프리미엄 캐빈", stay_date="2026-10-03", zone="D"),
+]
+
+
+def test_zone_priority_decides_before_cabin_priority():
+    # 캐빈 이름은 둘 다 '프리미엄'이지만 구역 우선순위가 D 먼저다.
+    picked = make_flow(["프리미엄"], zones=["D", "C"]).pick_offer(ZONED)
+    assert picked.zone == "D"
+
+
+def test_zone_order_is_respected():
+    assert make_flow([], zones=["C", "D"]).pick_offer(ZONED).zone == "C"
+    assert make_flow([], zones=["D", "C"]).pick_offer(ZONED).zone == "D"
+
+
+def test_excluded_zone_is_never_picked():
+    only_a = [ZONED[0]]
+    assert make_flow([], exclude_zones=["A"]).pick_offer(only_a) is None
+
+
+def test_exclusion_wins_over_wanted_when_both_list_a_zone():
+    assert make_flow([], zones=["A"], exclude_zones=["A"]).pick_offer([ZONED[0]]) is None
+
+
+def test_unknown_zone_is_skipped_when_zones_requested_and_strict():
+    unknown = [Offer(index=0, name="프리미엄 캐빈", stay_date="2026-10-03", zone="")]
+    assert make_flow([], zones=["C"]).pick_offer(unknown) is None
+
+
+def test_unknown_zone_is_allowed_when_strict_is_off():
+    unknown = [Offer(index=0, name="프리미엄 캐빈", stay_date="2026-10-03", zone="")]
+    picked = make_flow([], zones=["C"], zone_strict=False).pick_offer(unknown)
+    assert picked is not None
+
+
+def test_unknown_zone_is_fine_when_no_zone_requested():
+    unknown = [Offer(index=0, name="프리미엄 캐빈", stay_date="2026-10-03", zone="")]
+    assert make_flow([]).pick_offer(unknown) is not None
+
+
+def test_zone_and_cabin_conditions_must_both_hold():
+    # C구역은 원하지만 '디럭스'는 없다 → 아무것도 고르지 않는다.
+    assert make_flow(["디럭스"], zones=["C"]).pick_offer(ZONED) is None

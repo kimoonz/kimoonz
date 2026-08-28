@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS state (
     stay_date   TEXT NOT NULL,
     cabin       TEXT NOT NULL,
     available   INTEGER NOT NULL,
+    zone        TEXT NOT NULL DEFAULT '',
     remaining   INTEGER,
     price       TEXT NOT NULL DEFAULT '',
     first_seen  TEXT NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS events (
     stay_date  TEXT NOT NULL,
     cabin      TEXT NOT NULL,
     kind       TEXT NOT NULL,
+    zone       TEXT NOT NULL DEFAULT '',
     remaining  INTEGER,
     price      TEXT NOT NULL DEFAULT '',
     note       TEXT NOT NULL DEFAULT ''
@@ -67,6 +69,11 @@ class TrackerStore:
         self.conn.row_factory = sqlite3.Row
         with closing(self.conn.cursor()) as cur:
             cur.executescript(SCHEMA)
+            # 구역 열은 나중에 추가됐다. 예전 DB도 그대로 열리게 한다.
+            for table in ("state", "events"):
+                columns = {row[1] for row in cur.execute(f"PRAGMA table_info({table})")}
+                if "zone" not in columns:
+                    cur.execute(f"ALTER TABLE {table} ADD COLUMN zone TEXT NOT NULL DEFAULT ''")
         self.conn.commit()
 
     def close(self) -> None:
@@ -83,7 +90,7 @@ class TrackerStore:
     def load_state(self, source: str = "db") -> Snapshot | None:
         """마지막으로 저장된 상태를 스냅샷으로 복원한다. 비어 있으면 None."""
         rows = self.conn.execute(
-            "SELECT stay_date, cabin, available, remaining, price, last_seen FROM state"
+            "SELECT stay_date, cabin, available, remaining, price, zone, last_seen FROM state"
         ).fetchall()
         if not rows:
             return None
@@ -94,11 +101,17 @@ class TrackerStore:
                 available=bool(r["available"]),
                 remaining=r["remaining"],
                 price=r["price"] or "",
+                zone=r["zone"] or "",
             )
             for r in rows
         )
         latest = max(r["last_seen"] for r in rows)
-        return Snapshot(taken_at=datetime.fromisoformat(latest), slots=slots, source=source)
+        try:
+            taken_at = datetime.fromisoformat(latest)
+        except ValueError:
+            # 타임스탬프가 깨져 있어도 추적 자체를 막지는 않는다.
+            taken_at = now_kst()
+        return Snapshot(taken_at=taken_at, slots=slots, source=source)
 
     def save_state(self, snapshot: Snapshot, changed_keys: Iterable[tuple[str, str]] = ()) -> None:
         """현재 상태를 반영한다. 스냅샷에서 사라진 칸은 지운다."""
@@ -109,13 +122,14 @@ class TrackerStore:
                 self.conn.execute(
                     """
                     INSERT INTO state
-                        (stay_date, cabin, available, remaining, price,
+                        (stay_date, cabin, available, remaining, price, zone,
                          first_seen, last_seen, last_change)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(stay_date, cabin) DO UPDATE SET
                         available   = excluded.available,
                         remaining   = excluded.remaining,
                         price       = excluded.price,
+                        zone        = excluded.zone,
                         last_seen   = excluded.last_seen,
                         last_change = CASE WHEN ? THEN excluded.last_seen
                                            ELSE state.last_change END
@@ -126,6 +140,7 @@ class TrackerStore:
                         int(slot.available),
                         slot.remaining,
                         slot.price,
+                        slot.zone,
                         ts,
                         ts,
                         ts if slot.key in changed else None,
@@ -148,14 +163,15 @@ class TrackerStore:
             return
         with self.conn:
             self.conn.executemany(
-                "INSERT INTO events (ts, stay_date, cabin, kind, remaining, price, note) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO events (ts, stay_date, cabin, kind, zone, remaining, price, note) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         (change.at or now_kst()).isoformat(),
                         change.slot.stay_date,
                         change.slot.cabin,
                         change.kind.value,
+                        change.slot.zone,
                         change.slot.remaining,
                         change.slot.price,
                         note,
@@ -164,13 +180,16 @@ class TrackerStore:
                 ],
             )
 
-    def record_attempt(self, stay_date: str, cabin: str, stage: str, note: str = "") -> None:
+    def record_attempt(
+        self, stay_date: str, cabin: str, stage: str, note: str = "", zone: str = ""
+    ) -> None:
         """확보 시도 결과. 전환(events)과 같은 표에 남기되 kind 를 달리해서,
         '취소 감지 건수' 통계가 시도 횟수로 부풀지 않게 한다."""
         with self.conn:
             self.conn.execute(
-                "INSERT INTO events (ts, stay_date, cabin, kind, note) VALUES (?, ?, ?, ?, ?)",
-                (now_kst().isoformat(), stay_date, cabin, f"attempt:{stage}", note[:500]),
+                "INSERT INTO events (ts, stay_date, cabin, kind, zone, note) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (now_kst().isoformat(), stay_date, cabin, f"attempt:{stage}", zone, note[:500]),
             )
 
     def recent_events(self, limit: int = 20, kinds: Sequence[str] | None = None) -> list[sqlite3.Row]:
@@ -232,6 +251,15 @@ class TrackerStore:
             (ChangeKind.OPENED.value, limit),
         ).fetchall()
         return [(r["stay_date"], r["n"]) for r in rows]
+
+    def cancellation_by_zone(self) -> list[tuple[str, int]]:
+        """구역별 취소 건수. 어느 구역이 잘 풀리는지."""
+        rows = self.conn.execute(
+            "SELECT CASE WHEN zone = '' THEN '미상' ELSE zone END AS z, COUNT(*) AS n "
+            "FROM events WHERE kind = ? GROUP BY z ORDER BY n DESC, z",
+            (ChangeKind.OPENED.value,),
+        ).fetchall()
+        return [(r["z"], r["n"]) for r in rows]
 
     def survival_times(self, limit: int = 20) -> list[tuple[str, str, float]]:
         """취소가 뜨고 다시 마감되기까지 걸린 시간(초).
