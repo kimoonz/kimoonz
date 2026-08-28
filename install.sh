@@ -58,7 +58,8 @@ say ""
 
 cd "$DEST" || fail "폴더로 이동하지 못했습니다: $DEST"
 # 이 스크립트 자체가 파이프로 실행될 수 있으므로, 마법사가 키보드를 읽도록 터미널을 연결한다.
-if [ -e /dev/tty ]; then
+# /dev/tty 는 파일로는 보이지만 실제로는 못 여는 환경(cron, 컨테이너)이 있어 열어서 확인한다.
+if (exec < /dev/tty) 2>/dev/null; then
   exec ./setup.sh < /dev/tty
 fi
 exec ./setup.sh
