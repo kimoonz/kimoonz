@@ -67,15 +67,24 @@ if (-not $inner) { Die '내려받은 파일이 비어 있습니다.' }
 # 폴더째 지우는 방식은 쓰지 않는다 — 그 폴더 안에서 실행하면 Windows 가 잠가 실패하고,
 # 무엇보다 설정과 로그인 정보가 날아간다.
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
-try {
-    Copy-Item -Path (Join-Path $inner.FullName '*') -Destination $Dest -Recurse -Force
-} catch {
+
+# robocopy 를 쓴다. Copy-Item -Recurse 는 대상에 같은 이름의 폴더가 이미 있으면
+# 안으로 한 겹 더 집어넣는(중첩) 고질적인 동작이 있어 업데이트에 쓰기 어렵다.
+# robocopy 는 Windows 에 기본으로 들어 있고 병합 복사가 제 일이다.
+# /XD, /XF 는 만일을 대비한 이중 안전장치다(압축에 애초에 들어 있지 않다).
+$rcArgs = @(
+    $inner.FullName, $Dest, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NP',
+    '/XD', '.venv', '.state', '/XF', 'config.yaml', 'selectors.yaml'
+)
+& robocopy @rcArgs | Out-Null
+# robocopy 는 0~7 이 정상(8 이상이 실패)이라는 독특한 규약을 쓴다.
+if ($LASTEXITCODE -ge 8) {
     Die @"
-코드를 덮어쓰지 못했습니다.
+코드를 덮어쓰지 못했습니다. (robocopy 코드 $LASTEXITCODE)
 프로그램 창이 열려 있으면 닫고 다시 실행해 주세요.
-$($_.Exception.Message)
 "@
 }
+$global:LASTEXITCODE = 0
 Remove-Item -Recurse -Force $tmpDir, $zip -ErrorAction SilentlyContinue
 
 if ($isUpdate) { Say '최신 코드로 바꿨습니다. (설정과 로그인 정보는 그대로)' }
