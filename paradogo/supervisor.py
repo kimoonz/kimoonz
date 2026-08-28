@@ -136,7 +136,11 @@ def describe(beat: Heartbeat | None) -> str:
 
     age = beat.age_seconds
     lines: list[str] = []
-    if beat.alive:
+    if beat.alive and beat.state == "starting":
+        # 아직 브라우저를 띄우고 로그인하는 중이다. 여기서 '감시 중'이라고 하면
+        # 로그인이 실패해도 잘 도는 것처럼 보인다.
+        lines.append(f"◐ 준비 중 — 브라우저를 띄우고 로그인하는 중 (PID {beat.pid})")
+    elif beat.alive:
         lines.append(f"● 감시 중 (PID {beat.pid})")
     elif beat.state == "needs_login":
         lines.append("▲ 멈춰 있음 — 다시 로그인이 필요합니다")

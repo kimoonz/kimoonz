@@ -82,8 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("gui", help="★ 창으로 쓰기 — 버튼과 로그가 있는 화면")
     sub.add_parser(
-        "start", help="★ 처음 쓰시면 이것부터 — 설정부터 감시 시작까지 한 번에"
+        "start", help="터미널에서 설정부터 감시 시작까지 한 번에"
     )
     sub.add_parser("doctor", help="설정·셀렉터·알림 점검")
     sub.add_parser("next-open", help="다음 예약 오픈 시각 계산")
@@ -214,6 +215,22 @@ def cmd_next_open(args: argparse.Namespace) -> int:
     print(f"남은 시간      : {humanize((nxt - now).total_seconds())}")
     print(f"열리는 투숙 월 : {stay_year}년 {stay_month}월")
     return 0
+
+
+def cmd_gui(args: argparse.Namespace) -> int:
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        print("창 화면을 쓰려면 tkinter 가 필요한데 설치돼 있지 않습니다.")
+        print("  Windows/macOS : python.org 설치본에는 기본 포함입니다.")
+        print("                  다시 설치하거나 python.org 버전을 쓰세요.")
+        print("  Ubuntu/Debian : sudo apt install python3-tk")
+        print("\n창 없이 쓰시려면: python -m paradogo start")
+        return 1
+
+    from .gui import run_gui
+
+    return run_gui(Path(args.config), Path(args.selectors))
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -779,6 +796,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 COMMANDS = {
+    "gui": cmd_gui,
     "start": cmd_start,
     "doctor": cmd_doctor,
     "next-open": cmd_next_open,

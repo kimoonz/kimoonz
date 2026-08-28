@@ -87,12 +87,20 @@ echo.
 echo 설치 끝났습니다.
 echo.
 echo ==================================================
-echo  이어서 설정을 시작합니다
+echo  프로그램을 띄웁니다
 echo ==================================================
-echo 브라우저 창이 뜨면 안내대로 클릭만 하시면 됩니다.
 echo.
 
-"%VENV_PY%" -m paradogo %* start
+"%VENV_PY%" -c "import tkinter" >nul 2>&1
+if errorlevel 1 (
+  echo 창 화면을 쓸 수 없어 터미널로 진행합니다.
+  echo.
+  "%VENV_PY%" -m paradogo %* start
+) else (
+  echo 창이 뜨면 [설정하기] 버튼부터 눌러 주세요.
+  echo 다음부터는 gui.bat 을 더블클릭하시면 됩니다.
+  "%VENV_PY%" -m paradogo %* gui
+)
 
 echo.
 echo 창을 닫으려면 아무 키나 누르세요.

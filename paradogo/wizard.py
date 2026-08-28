@@ -90,6 +90,8 @@ CALENDAR_JS = r"""
 
 __all__ = [
     "CALENDAR_JS",
+    "ConsolePrompter",
+    "Prompter",
     "COLLECT_JS",
     "fill_defaults",
     "merge_selectors",
@@ -333,27 +335,63 @@ notify:
 {api_block}"""
 
 
+class Prompter:
+    """마법사가 사람에게 묻는 방법.
+
+    터미널에서는 input() 이지만 창(GUI)에서는 대화상자여야 한다. 마법사 본체가
+    어느 쪽인지 몰라도 되도록 이 인터페이스 뒤로 감춘다.
+    """
+
+    def ask(self, prompt: str, default: str = "") -> str:
+        raise NotImplementedError
+
+    def ask_yes(self, prompt: str, default: bool = True) -> bool:
+        raise NotImplementedError
+
+    async def wait(self, message: str) -> None:
+        """사용자가 브라우저에서 할 일을 마칠 때까지 기다린다."""
+        raise NotImplementedError
+
+    def info(self, message: str) -> None:
+        print(message)
+
+
+class ConsolePrompter(Prompter):
+    """터미널용."""
+
+    def ask(self, prompt: str, default: str = "") -> str:
+        suffix = f" [{default}]" if default else ""
+        answer = input(f"{prompt}{suffix}: ").strip()
+        return answer or default
+
+    def ask_yes(self, prompt: str, default: bool = True) -> bool:
+        hint = "Y/n" if default else "y/N"
+        answer = input(f"{prompt} [{hint}]: ").strip().lower()
+        if not answer:
+            return default
+        return answer.startswith(("y", "ㅇ"))
+
+    async def wait(self, message: str) -> None:
+        print("\n" + "-" * 66)
+        print(message)
+        print("다 하셨으면 여기 터미널에서 Enter 를 누르세요.")
+        print("-" * 66)
+        await asyncio.get_event_loop().run_in_executor(None, input)
+
+
+_console = ConsolePrompter()
+
+
 def ask(prompt: str, default: str = "") -> str:
-    """터미널 입력. 기본값이 있으면 그냥 Enter 로 넘어갈 수 있다."""
-    suffix = f" [{default}]" if default else ""
-    answer = input(f"{prompt}{suffix}: ").strip()
-    return answer or default
+    return _console.ask(prompt, default)
 
 
 def ask_yes(prompt: str, default: bool = True) -> bool:
-    hint = "Y/n" if default else "y/N"
-    answer = input(f"{prompt} [{hint}]: ").strip().lower()
-    if not answer:
-        return default
-    return answer.startswith(("y", "ㅇ"))
+    return _console.ask_yes(prompt, default)
 
 
 async def wait_enter(message: str) -> None:
-    print("\n" + "-" * 66)
-    print(message)
-    print("다 하셨으면 여기 터미널에서 Enter 를 누르세요.")
-    print("-" * 66)
-    await asyncio.get_event_loop().run_in_executor(None, input)
+    await _console.wait(message)
 
 
 # ------------------------------------------------------------------ 실행부
@@ -440,6 +478,7 @@ async def run_wizard(
     zones: list[str],
     exclude_zones: list[str],
     auto_urls: dict[str, str] | None = None,
+    prompter: "Prompter | None" = None,
 ) -> tuple[Path, Path]:
     """브라우저를 한 번 띄워 놓고 안내대로 따라오게 하면서 설정을 만든다.
 
@@ -451,6 +490,7 @@ async def run_wizard(
     """
     from .browser import BrowserSession
 
+    ui = prompter or ConsolePrompter()
     stages: dict[str, dict] = {}
     calendar: dict[str, Any] = {}
     captured: list[dict[str, Any]] = []
@@ -483,7 +523,7 @@ async def run_wizard(
             for attempt in range(1, tries + 1):
                 if auto_urls and name in auto_urls:
                     await page.goto(auto_urls[name], wait_until="domcontentloaded")
-                await wait_enter(instruction)
+                await ui.wait(instruction)
                 await _capture(page, stages, name)
                 if name == "calendar":
                     try:
@@ -492,17 +532,16 @@ async def run_wizard(
                         log.warning("달력 수집 실패: %s", exc)
                 ok, detail = validate(stages.get(name) or {})
                 if ok:
-                    print(f"     ✓ {detail}")
+                    ui.info(f"     ✓ {detail}")
                     return True
-                print(f"\n     ! {detail}")
-                print(f"       (현재 열려 있는 주소: {page.url})")
-                if attempt < tries and ask_yes("     화면을 옮기고 다시 해보시겠어요?"):
+                ui.info(f"\n     ! {detail}\n       (현재 열려 있는 주소: {page.url})")
+                if attempt < tries and ui.ask_yes("     화면을 옮기고 다시 해보시겠어요?"):
                     continue
-                print("     건너뜁니다 — 이 부분은 흔한 기본값으로 채웁니다.")
+                ui.info("     건너뜁니다 — 이 부분은 흔한 기본값으로 채웁니다.")
                 return False
             return False
 
-        print("\n브라우저 창을 띄웠습니다. 이제 안내대로 따라오시면 됩니다.")
+        ui.info("\n브라우저 창을 띄웠습니다. 이제 안내대로 따라오시면 됩니다.")
         await page.goto(cfg.site.base_url, wait_until="domcontentloaded")
 
         if await step(
@@ -521,7 +560,7 @@ async def run_wizard(
         ):
             booking_url = page.url
         await session.save_state()
-        print("     ✓ 로그인 세션을 저장했습니다. 다음부터는 자동으로 재사용합니다.")
+        ui.info("     ✓ 로그인 세션을 저장했습니다. 다음부터는 자동으로 재사용합니다.")
 
         await step(
             "rooms",
@@ -536,7 +575,7 @@ async def run_wizard(
             except Exception:
                 pass
 
-        if ask_yes(
+        if ui.ask_yes(
             "\n4/4  예약자 정보 입력 화면까지 한 번 들어가 보시겠어요?\n"
             "     (해두면 취소표를 잡을 때 더 정확합니다. 결제는 절대 하지 않습니다)"
         ):
@@ -547,7 +586,7 @@ async def run_wizard(
                 check_guest,
             )
         else:
-            print("     건너뜁니다. 나중에 필요하면 다시 `start` 를 돌리면 됩니다.")
+            ui.info("     건너뜁니다. 나중에 필요하면 다시 `start` 를 돌리면 됩니다.")
 
     # 수집 결과를 설정 파일로
     selectors = fill_defaults(merge_selectors(stages, calendar))
@@ -575,13 +614,13 @@ async def run_wizard(
         encoding="utf-8",
     )
 
-    print("\n설정 저장 완료")
-    print(f"  · {config_path}")
-    print(f"  · {selectors_path}")
+    ui.info("\n설정 저장 완료")
+    ui.info(f"  · {config_path}")
+    ui.info(f"  · {selectors_path}")
     if api:
-        print("  · 재고 조회 API 를 찾았습니다 — 취소 감지가 훨씬 빨라집니다.")
+        ui.info("  · 재고 조회 API 를 찾았습니다 — 취소 감지가 훨씬 빨라집니다.")
     else:
-        print("  · 재고 조회 API 는 못 찾았습니다. 달력 화면을 읽는 방식으로 동작합니다.")
+        ui.info("  · 재고 조회 API 는 못 찾았습니다. 달력 화면을 읽는 방식으로 동작합니다.")
     return config_path, selectors_path
 
 

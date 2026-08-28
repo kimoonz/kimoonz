@@ -135,3 +135,17 @@ def test_describe_dead_process_is_reported_as_dead():
         updated_at=(now_kst() - timedelta(hours=1)).isoformat(),
     )
     assert "죽어" in describe(beat)
+
+
+def test_starting_is_not_reported_as_watching():
+    # 브라우저를 띄우고 로그인하는 중인데 '감시 중'이라고 하면,
+    # 로그인이 실패해도 잘 도는 것처럼 보인다.
+    beat = Heartbeat(state="starting", pid=os.getpid(), updated_at=now_kst().isoformat())
+    text = describe(beat)
+    assert "준비 중" in text
+    assert "감시 중" not in text.splitlines()[0]
+
+
+def test_tracking_is_reported_as_watching():
+    beat = Heartbeat(state="tracking", pid=os.getpid(), updated_at=now_kst().isoformat())
+    assert describe(beat).splitlines()[0].startswith("● 감시 중")
