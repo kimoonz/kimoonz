@@ -15,7 +15,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, time as dtime, timedelta, timezone
 
 import pandas as pd
-from zoneinfo import ZoneInfo
 
 from .config import Config
 from .data import DataLoader
@@ -28,12 +27,13 @@ from .strategy import (StrategyParams, allocation_changes, current_targets,
                        suggest_target_vol)
 from .signals import Side, Signal, build_signal, combine
 from .state import AlertState
+from .tz import zone
 from .telegram import Telegram
 
 log = logging.getLogger(__name__)
 
-KST = ZoneInfo("Asia/Seoul")
-NY = ZoneInfo("America/New_York")
+KST = zone("Asia/Seoul")
+NY = zone("America/New_York")
 
 
 def is_market_open(now: datetime | None = None) -> bool:

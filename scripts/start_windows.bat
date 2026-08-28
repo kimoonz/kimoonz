@@ -8,6 +8,10 @@ REM  관리자 권한으로 한 번 실행하세요.
 REM ===================================================================
 cd /d "%~dp0.."
 
+REM 출력이 파이프나 파일로 넘어가면 콘솔이 아니라 cp949 로 인코딩돼
+REM 한글과 이모지에서 UnicodeEncodeError 가 난다. UTF-8 로 고정한다.
+set PYTHONIOENCODING=utf-8
+
 if "%TELEGRAM_BOT_TOKEN%"=="" (
     echo [경고] TELEGRAM_BOT_TOKEN 환경변수가 없습니다. 알림이 화면에만 출력됩니다.
     echo        PowerShell: [Environment]::SetEnvironmentVariable^("TELEGRAM_BOT_TOKEN", "^<토큰^>", "User"^)

@@ -314,3 +314,25 @@ def test_source_diagnostics_report_file_origin(monkeypatch, tmp_path):
     monkeypatch.delenv("TELEGRAM_CHAT_ID_FUTURES", raising=False)
     cfg.save_chat_id("-123")
     assert "파일" in cfg.telegram_sources()["chat_id"]
+
+
+def test_timezone_helper_returns_zone():
+    from bayesfutures.tz import zone
+
+    assert str(zone("Asia/Seoul")) == "Asia/Seoul"
+
+
+def test_timezone_helper_explains_missing_tzdata(monkeypatch):
+    """Windows 에 tzdata 가 없을 때 원인이 바로 보여야 한다."""
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from bayesfutures import tz
+
+    def boom(_key):
+        raise ZoneInfoNotFoundError("No time zone found")
+
+    monkeypatch.setattr(tz, "ZoneInfo", boom)
+    with pytest.raises(RuntimeError) as err:
+        tz.zone("Asia/Seoul")
+    assert "tzdata" in str(err.value)
+    assert "pip install" in str(err.value)

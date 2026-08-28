@@ -192,13 +192,47 @@ python run.py plan --equity 200000
 
 ## 설치
 
-```bash
-git clone <이 저장소>
-cd kimoonz
+Python 3.11 이상이 필요합니다.
+
+### Windows
+
+```powershell
+# 1. 프로젝트를 받을 위치로 이동 (클라우드 동기화 폴더는 피하세요 — 아래 참고)
+cd C:\Users\%USERNAME%
+
+# 2. 내려받기
+git clone -b claude/bayesian-futures-trading-signals-y4317g https://github.com/kimoonz/kimoonz.git futures-signal
+cd futures-signal
+
+# 3. 의존성 설치
 pip install -r requirements.txt
+
+# 4. 연결 확인
+python run.py telegram-test
 ```
 
-Python 3.11 이상이 필요합니다.
+`git` 이 없다면 GitHub 웹에서 해당 브랜치 → **Code → Download ZIP** 으로
+받아 압축을 풀고 3번부터 진행하면 됩니다.
+
+> **구글 드라이브 동기화 폴더에 두지 마세요.** 파이썬이 동기화 폴더에 있으면
+> 요청마다 CA 번들을 드라이브에서 다시 읽어 메시지 한 건에 1분씩 걸립니다.
+> 또 `data_cache/`, `state/` 가 계속 바뀌어 동기화가 쉬지 않습니다.
+
+### macOS / Linux
+
+```bash
+git clone -b claude/bayesian-futures-trading-signals-y4317g https://github.com/kimoonz/kimoonz.git futures-signal
+cd futures-signal
+pip install -r requirements.txt
+python run.py telegram-test
+```
+
+### Windows 에서 tzdata 가 필요한 이유
+
+리눅스·macOS 는 시스템에 시간대 데이터베이스가 있지만 **Windows 는 없습니다.**
+없으면 `ZoneInfo("Asia/Seoul")` 이 import 시점에 터져서 프로그램이 아예
+안 뜹니다. `requirements.txt` 에 Windows 조건부로 들어 있으니 위 3번만
+실행하면 됩니다.
 
 ---
 
@@ -466,7 +500,7 @@ scripts/
   start_windows.bat       Windows 상시 실행 (죽으면 자동 재시작)
   start_unix.sh           macOS/Linux 상시 실행
   bayesfutures.service    Linux systemd 유닛
-tests/                    151개 테스트
+tests/                    153개 테스트
 ```
 
 ```bash

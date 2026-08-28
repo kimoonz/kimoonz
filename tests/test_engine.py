@@ -1,7 +1,6 @@
 """엔진 · 장시간 · 브리핑 스케줄 검증."""
 
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -9,9 +8,10 @@ from bayesfutures.config import Config
 from bayesfutures.engine import Engine, is_market_open
 from bayesfutures.state import AlertState
 from bayesfutures.telegram import Telegram
+from bayesfutures.tz import zone
 
-NY = ZoneInfo("America/New_York")
-KST = ZoneInfo("Asia/Seoul")
+NY = zone("America/New_York")
+KST = zone("Asia/Seoul")
 
 
 @pytest.mark.parametrize("when,expected", [

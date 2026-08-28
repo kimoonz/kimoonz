@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import html
 from datetime import datetime
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -13,8 +12,9 @@ from .features import label_ko
 from .model import Prediction, interval_seconds
 from .positions import ExitEvent
 from .signals import Side, Signal
+from .tz import zone
 
-KST = ZoneInfo("Asia/Seoul")
+KST = zone("Asia/Seoul")
 SIDE_ICON = {Side.LONG: "🟢", Side.SHORT: "🔴", Side.FLAT: "⚪"}
 TF_KO = {"daily": "일봉", "hourly": "1시간봉"}
 
