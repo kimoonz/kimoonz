@@ -53,8 +53,7 @@ class SelectorMap:
         if not p.exists():
             raise ConfigError(
                 f"셀렉터 파일이 없습니다: {p}\n"
-                "→ `cp config/selectors.example.yaml config/selectors.yaml` 후, "
-                "`python -m paradogo discover` 결과를 보고 값을 채워 주세요."
+                "→ `python -m paradogo start` 를 실행하면 자동으로 만들어집니다."
             )
         with p.open("r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}

@@ -807,6 +807,14 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n중단했습니다.")
         return 130
+    except EOFError:
+        # 입력을 받을 수 없는 환경(더블클릭·파이프·서비스 실행 등)에서
+        # 파이썬 오류가 그대로 튀어나오면 무엇이 문제인지 알 수가 없다.
+        print("\n키보드 입력을 받을 수 없는 상태입니다.")
+        print("터미널(명령 프롬프트)을 직접 열어서 실행하시거나,")
+        print("물어보는 항목을 옵션으로 미리 넘겨 주세요. 예:")
+        print("  python -m paradogo --date 2026-09-19 --nights 1 --zones C,D start")
+        return 1
 
 
 if __name__ == "__main__":

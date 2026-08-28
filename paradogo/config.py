@@ -447,7 +447,8 @@ class Config:
         if not p.exists():
             raise ConfigError(
                 f"설정 파일이 없습니다: {p}\n"
-                "→ `cp config/config.example.yaml config/config.yaml` 후 값을 채워 주세요."
+                "→ 처음이시면 `python -m paradogo start` 를 실행하세요. "
+                "(브라우저 안내를 따라가면 설정이 자동으로 만들어집니다)"
             )
         with p.open("r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh) or {}

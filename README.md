@@ -34,14 +34,28 @@
 API를 찾아두면 폴링 주기를 5초까지 줄일 수 있습니다(DOM 경로는 15초 하한).
 `sniff` 는 브라우저가 오가는 XHR/fetch 응답을 엿들어 재고 조회 요청을 찾아 줍니다.
 
-## 시작하기 — 이 한 줄이면 됩니다
+## 시작하기
+
+**Windows** — 폴더를 받은 뒤 `setup.bat` 을 더블클릭하세요.
+
+**macOS / Linux** — 터미널에서:
 
 ```bash
-pip install -r requirements.txt && python -m playwright install chromium
-python -m paradogo start
+./setup.sh
 ```
 
-브라우저가 뜨면 **안내대로 클릭만** 하시면 됩니다. 2~3분이면 끝납니다.
+파이썬 확인 → 필요한 것 설치 → 브라우저 내려받기 → 설정까지 알아서 이어집니다.
+(파이썬이 없으면 어디서 받는지 알려줍니다. 시스템 파이썬은 건드리지 않고
+이 폴더 안 `.venv` 에만 설치합니다.)
+
+날짜를 미리 정해두셨다면 이렇게 넘기면 묻지 않습니다.
+
+```bash
+./setup.sh --date 2026-09-19 --nights 1        # macOS / Linux
+setup.bat --date 2026-09-19 --nights 1         # Windows (명령 프롬프트에서)
+```
+
+설치가 끝나면 브라우저가 뜹니다. **안내대로 클릭만** 하시면 됩니다. 2~3분이면 끝납니다.
 
 ```
 1/4  로그인 화면까지 들어가 주세요            → Enter
@@ -60,12 +74,14 @@ python -m paradogo start
 python -m paradogo --date 2026-09-19 --nights 1 --zones C,D start
 ```
 
-설정이 끝난 뒤로는 이것만 기억하시면 됩니다.
+설정이 끝난 뒤로는 파일 두 개만 쓰시면 됩니다.
 
-```bash
-python -m paradogo track --forever   # 계속 켜두기
-python -m paradogo status            # 지금 돌고 있나 확인
-```
+| 하고 싶은 것 | Windows | macOS / Linux |
+| --- | --- | --- |
+| 감시 시작 (계속 켜두기) | `watch.bat` 더블클릭 | `./watch.sh` |
+| 지금 돌고 있나 확인 | `status.bat` 더블클릭 | `./status.sh` |
+
+명령어로 쓰신다면 `python -m paradogo track --forever` / `python -m paradogo status` 입니다.
 
 ### 자동 로그인
 
@@ -192,9 +208,11 @@ python -m playwright install chromium
 
 ## 손으로 설정하고 싶다면
 
-`start` 가 해주는 일을 단계별로 나눠 놓은 명령들입니다. 보통은 쓸 일이 없습니다.
+`setup` 과 `start` 가 해주는 일을 단계별로 나눠 놓은 명령들입니다. 보통은 쓸 일이 없습니다.
 
 ```bash
+pip install -r requirements.txt
+python -m playwright install chromium
 cp config/config.example.yaml   config/config.yaml
 cp config/selectors.example.yaml config/selectors.yaml
 
