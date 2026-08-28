@@ -274,18 +274,42 @@ def cmd_positions(args, cfg: Config) -> int:
 
 
 def cmd_telegram_test(args, cfg: Config) -> int:
-    tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
-    if not tg.configured:
-        print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 가 설정되지 않았습니다.\n"
-              ".env 파일을 만들거나 환경변수를 설정하세요.", file=sys.stderr)
+    """설정이 어디서 읽혔는지 보여주고 실제로 한 통 보낸다."""
+    src = cfg.telegram_sources()
+    print("설정 출처")
+    print(f"  봇 토큰  {src['token']}"
+          + (f"  ({src['token_hint']})" if src["token"] != "없음" else ""))
+    print(f"  chat_id  {src['chat_id']}"
+          + (f"  ({cfg.telegram_chat_id})" if cfg.telegram_chat_id else ""))
+    print()
+
+    if not cfg.telegram_token:
+        print("TELEGRAM_BOT_TOKEN 을 이 프로세스가 못 봅니다.\n", file=sys.stderr)
+        print("  Windows: 아래를 PowerShell 에서 실행한 뒤 '새 터미널'을 여세요.", file=sys.stderr)
+        print('    [Environment]::SetEnvironmentVariable('
+              '"TELEGRAM_BOT_TOKEN", "<토큰>", "User")', file=sys.stderr)
+        print("  이미 설정했다면 터미널을 새로 열지 않아서일 가능성이 큽니다.\n"
+              "  (환경변수는 프로세스 시작 시점에 복사됩니다)", file=sys.stderr)
         return 1
+
     try:
-        name = tg.check()
+        name = tg_name = Telegram(cfg.telegram_token, cfg.telegram_chat_id).check()
     except Exception as exc:
         print(f"봇 확인 실패: {exc}", file=sys.stderr)
+        print("@BotFather 에서 /mybots -> API Token 으로 토큰을 다시 확인하세요.",
+              file=sys.stderr)
         return 1
-    ok = tg.send("✅ <b>연결 테스트 성공</b>\n확률 기반 선물 알림봇이 정상 연결되었습니다.")
-    print(f"봇 @{name} — 발송 {'성공' if ok else '실패'}")
+    print(f"봇 확인: @{name}")
+
+    if not cfg.telegram_chat_id:
+        print("\nchat_id 가 없습니다. 받을 방을 정하세요:", file=sys.stderr)
+        print("  python scripts/setup_telegram.py", file=sys.stderr)
+        return 1
+
+    tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id,
+                  on_chat_migrated=cfg.save_chat_id)
+    ok = tg.send("✅ <b>연결 테스트 성공</b>\n해외선물 매매 신호가 여기로 옵니다.")
+    print(f"발송 {'성공' if ok else '실패'}")
     return 0 if ok else 1
 
 

@@ -168,6 +168,29 @@ class Config:
                 return None
         return None
 
+    def telegram_sources(self) -> dict[str, str]:
+        """토큰·chat_id 가 각각 어디서 왔는지. 값 자체는 담지 않는다.
+
+        '분명히 설정했는데 알림이 안 온다'의 원인은 거의 항상
+        '이 프로세스가 그 변수를 못 본다'이다. 어디서 읽었는지를 보여주는 게
+        값을 보여주는 것보다 문제 해결에 쓸모 있고, 로그에 토큰이 남지도 않는다.
+        """
+        token = os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+        out = {
+            "token": ("환경변수 TELEGRAM_BOT_TOKEN" if token else "없음"),
+            "token_hint": (f"{len(token)}자, {token[:token.find(':')] if ':' in token else '?'}:..."
+                           if token else "-"),
+            "chat_id": "없음",
+        }
+        for key in ("TELEGRAM_CHAT_ID_FUTURES", "TELEGRAM_CHAT_ID"):
+            if (os.environ.get(key) or "").strip():
+                out["chat_id"] = f"환경변수 {key}"
+                break
+        else:
+            if self.chat_id_file.exists():
+                out["chat_id"] = f"파일 {self.chat_id_file}"
+        return out
+
     @property
     def chat_id_file(self) -> Path:
         return Path(self.state_dir) / "telegram_config.json"

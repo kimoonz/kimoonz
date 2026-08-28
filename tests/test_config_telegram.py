@@ -278,3 +278,39 @@ def test_network_error_retries_then_gives_up(monkeypatch):
     monkeypatch.setattr(tg_mod.time, "sleep", lambda _s: None)
     assert not tg_mod.Telegram("토큰", "-100", retries=3).send("테스트")
     assert len(attempts) == 3
+
+
+def test_source_diagnostics_never_expose_the_token(monkeypatch, tmp_path):
+    """진단 출력에 토큰 본문이 들어가면 안 된다 — 로그에 남는다."""
+    secret = "123456789:AAHsecretsecretsecretsecretsecret"
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", secret)
+    monkeypatch.setenv("TELEGRAM_CHAT_ID_FUTURES", "-5305089060")
+
+    src = cfg.telegram_sources()
+    blob = " ".join(src.values())
+    assert "AAHsecret" not in blob
+    assert secret not in blob
+    assert src["token"] == "환경변수 TELEGRAM_BOT_TOKEN"
+    assert src["chat_id"] == "환경변수 TELEGRAM_CHAT_ID_FUTURES"
+    assert "123456789" in src["token_hint"]      # 봇 id 는 공개 정보
+
+
+def test_source_diagnostics_report_missing(monkeypatch, tmp_path):
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_FUTURES", raising=False)
+    src = cfg.telegram_sources()
+    assert src["token"] == "없음" and src["chat_id"] == "없음"
+
+
+def test_source_diagnostics_report_file_origin(monkeypatch, tmp_path):
+    cfg = Config()
+    cfg.state_dir = str(tmp_path)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID_FUTURES", raising=False)
+    cfg.save_chat_id("-123")
+    assert "파일" in cfg.telegram_sources()["chat_id"]

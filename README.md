@@ -242,6 +242,22 @@ export TELEGRAM_BOT_TOKEN="<토큰>"
 python run.py telegram-test
 ```
 
+토큰·chat_id 를 **어디서 읽었는지**까지 보여줍니다(값은 안 찍습니다).
+
+```
+설정 출처
+  봇 토큰  환경변수 TELEGRAM_BOT_TOKEN  (46자, 123456789:...)
+  chat_id  환경변수 TELEGRAM_CHAT_ID_FUTURES  (-5305089060)
+
+봇 확인: @my_bot
+발송 성공
+```
+
+"분명히 설정했는데 안 된다"의 원인은 거의 항상 **터미널을 새로 열지
+않아서**입니다. 환경변수는 프로세스가 시작될 때 복사되므로, 설정한 뒤
+열려 있던 창에서는 계속 안 보입니다. 작업 스케줄러로 등록한 경우도
+등록 이후에 변수를 바꿨다면 작업을 다시 시작해야 합니다.
+
 ### 왜 .env 가 아니라 환경변수인가
 
 프로젝트 폴더가 깃이나 클라우드 드라이브로 동기화돼도 **토큰은 따라가지
@@ -450,7 +466,7 @@ scripts/
   start_windows.bat       Windows 상시 실행 (죽으면 자동 재시작)
   start_unix.sh           macOS/Linux 상시 실행
   bayesfutures.service    Linux systemd 유닛
-tests/                    148개 테스트
+tests/                    151개 테스트
 ```
 
 ```bash
