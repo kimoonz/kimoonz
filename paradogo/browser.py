@@ -39,13 +39,15 @@ class BrowserSession:
         self.page: Page | None = None
 
     async def __aenter__(self) -> "BrowserSession":
+        # 서비스로 등록해 백그라운드에서 돌 때는 창을 띄울 수 없다.
+        headless = self.cfg.run.headless or os.environ.get("PARADOGO_HEADLESS") == "1"
         self._pw = await async_playwright().start()
         # 이미 설치된 크롬/크로미움을 쓰고 싶을 때(예: 사내 PC의 고정 버전) 경로를 지정한다.
         executable = os.environ.get("PARADOGO_CHROMIUM_PATH") or None
         if executable:
             log.info("지정된 브라우저를 사용합니다: %s", executable)
         self.browser = await self._pw.chromium.launch(
-            headless=self.cfg.run.headless,
+            headless=headless,
             slow_mo=self.cfg.run.slow_mo_ms or 0,
             args=LAUNCH_ARGS,
             executable_path=executable,

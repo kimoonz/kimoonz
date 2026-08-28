@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import date, datetime, timedelta
 
 from .browser import BrowserSession
@@ -37,6 +38,11 @@ log = logging.getLogger(__name__)
 
 # API 모드에서는 브라우저 페이지가 놀고 있어 세션이 조용히 만료될 수 있다.
 SESSION_REFRESH_MINUTES = 15
+
+# 저장된 상태가 이보다 오래됐으면 비교 대상으로 쓰지 않는다.
+# 재시작 직후(몇 분)라면 그 사이의 취소까지 잡아내므로 비교하는 게 이득이지만,
+# 반나절 만에 켰다면 그동안의 모든 변화가 '방금 취소'로 쏟아진다.
+STALE_STATE_MINUTES = 60
 
 
 def upcoming_months(start: datetime, count: int) -> list[tuple[int, int]]:
@@ -130,6 +136,9 @@ class Tracker:
     def announce_result(self, result: BookingResult) -> None:
         if result.reached_payment:
             title = "✅ 취소표 확보 — 결제 페이지입니다. 지금 결제하세요!"
+            if os.environ.get("PARADOGO_HEADLESS") == "1" or self.cfg.run.headless:
+                # 창이 없는 상태라 화면을 보여줄 수 없다. 어디서 결제해야 하는지 알려준다.
+                title = "✅ 취소표 확보 — 홈페이지에서 결제해 주세요!"
         elif result.stage == "dry_run":
             title = "🔎 [모의 실행] 취소표 발견"
         else:
@@ -141,13 +150,24 @@ class Tracker:
         if result.cabin:
             zone = f"[{result.zone}] " if result.zone else ""
             body.append(f"캐빈: {zone}{result.cabin}")
+        if result.reached_payment and (
+            os.environ.get("PARADOGO_HEADLESS") == "1" or self.cfg.run.headless
+        ):
+            body.append(
+                "\n창이 없는 상태(백그라운드)로 잡았습니다. 직접 홈페이지에 로그인해서 "
+                "'예약확인 / 결제대기'에서 결제를 마쳐 주세요. 시간이 지나면 풀립니다."
+            )
         self.notifier.send(
             title, "\n".join(body), screenshot=result.screenshot, url=result.url
         )
 
     # -------------------------------------------------------------- 본체
 
-    async def run(self, session: BrowserSession) -> BookingResult | None:
+    async def run(
+        self,
+        session: BrowserSession,
+        on_round: "Callable[[dict[str, object]], None] | None" = None,
+    ) -> BookingResult | None:
         cfg = self.cfg
         track = cfg.run.track
         flow = BookingFlow(session, self.smap, cfg)
@@ -165,7 +185,20 @@ class Tracker:
         months = months_to_track(now_kst(), cfg.target.check_in_dates, track.months_ahead)
         previous: Snapshot | None = self.store.load_state(source.name)
         if previous is not None:
-            log.info("직전 상태 %d칸을 DB에서 이어받았습니다.", len(previous.slots))
+            age = (now_kst() - previous.taken_at).total_seconds() / 60
+            if age > STALE_STATE_MINUTES:
+                log.info(
+                    "저장된 상태가 %.0f분 전 것이라 기준선으로만 씁니다"
+                    "(그 사이 변화를 '방금 취소'로 알리지 않기 위해).",
+                    age,
+                )
+                previous = None
+            else:
+                log.info(
+                    "직전 상태 %d칸(%.0f분 전)을 이어받아 그 사이 변화까지 확인합니다.",
+                    len(previous.slots),
+                    age,
+                )
 
         deadline = (
             now_kst() + timedelta(minutes=track.max_duration_minutes)
@@ -211,7 +244,13 @@ class Tracker:
                         "⚠️ 재고 추적 중단 — 조회 5회 연속 실패",
                         f"마지막 오류: {exc}",
                     )
-                    return None
+                    # None 을 돌려주면 '정상적으로 한 바퀴 돌았다'와 구분되지 않는다.
+                    # 상시 감시 쪽에서 재시작으로 세려면 실패라고 말해야 한다.
+                    return BookingResult(
+                        ok=False,
+                        stage="failed",
+                        message=f"재고 조회가 5회 연속 실패했습니다: {exc}",
+                    )
                 await asyncio.sleep(interval)
                 continue
 
@@ -250,6 +289,18 @@ class Tracker:
                         await flow.login()
                 except Exception as exc:
                     log.warning("세션 갱신 실패(계속 진행): %s", exc)
+
+            if on_round is not None:
+                # 밖에서 '살아 있음'을 확인할 수 있게 매 회차 상태를 넘긴다.
+                on_round(
+                    {
+                        "round": self.round_no,
+                        "slots": len(snapshot.slots),
+                        "available": snapshot.available_count,
+                        "opened_total": self.store.counts()["opened"],
+                        "source": source.name,
+                    }
+                )
 
             wait = max(3.0, interval + random.uniform(-track.jitter_seconds, track.jitter_seconds))
             if track.dashboard:
@@ -314,8 +365,13 @@ class Tracker:
         return last
 
 
-async def run_track(cfg: Config, smap: SelectorMap, notifier: Notifier) -> BookingResult | None:
+async def run_track(
+    cfg: Config,
+    smap: SelectorMap,
+    notifier: Notifier,
+    on_round: "Callable[[dict[str, object]], None] | None" = None,
+) -> BookingResult | None:
     with TrackerStore(cfg.run.track.db_path) as store:
         tracker = Tracker(cfg, smap, notifier, store)
         async with BrowserSession(cfg) as session:
-            return await tracker.run(session)
+            return await tracker.run(session, on_round=on_round)

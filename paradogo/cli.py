@@ -107,6 +107,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_track.add_argument("--alert-only", action="store_true",
                          help="취소를 감지해도 예약은 하지 않고 알리기만")
     p_track.add_argument("--minutes", type=int, help="이 시간(분) 뒤 종료 (기본: 무제한)")
+    p_track.add_argument("--forever", action="store_true",
+                         help="계속 켜두기 — 멈추면 알아서 다시 띄우고 상태를 남깁니다")
+    p_track.add_argument("--stop-on-success", dest="stop_on_success", action="store_true",
+                         help="--forever 중 결제 화면까지 가면 감시를 멈춤 (기본: 계속)")
+
+    sub.add_parser("status", help="감시가 지금 돌고 있는지 확인")
+
+    p_service = sub.add_parser(
+        "service", help="PC 를 켜면 감시가 자동으로 뜨도록 등록"
+    )
+    p_service.add_argument("--install", action="store_true",
+                           help="등록 파일을 실제로 만듭니다 (기본: 내용만 보여줌)")
+    p_service.add_argument("--os", dest="os_name",
+                           choices=["linux", "macos", "windows"],
+                           help="직접 지정 (기본: 지금 OS)")
 
     p_stats = sub.add_parser("stats", help="추적 이력 통계 — 언제/어느 날짜에 취소가 나왔나")
     p_stats.add_argument("--limit", type=int, default=15, help="표시할 항목 수")
@@ -515,11 +530,59 @@ def cmd_track(args: argparse.Namespace) -> int:
         cfg.run.track.max_duration_minutes = args.minutes
 
     notifier = Notifier(cfg.notify)
-    result = asyncio.run(run_track(cfg, smap, notifier))
+    if args.forever:
+        from .supervisor import run_forever
+
+        result = asyncio.run(run_forever(cfg, smap, notifier, args.stop_on_success))
+    else:
+        result = asyncio.run(run_track(cfg, smap, notifier))
     if result is None:
         return 0
     print(result.message)
     return 0 if result.ok else 2
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    from .supervisor import describe, heartbeat_path, read_heartbeat
+
+    cfg, _ = load_all(args, need_selectors=False)
+    beat = read_heartbeat(heartbeat_path(cfg))
+    print(describe(beat))
+    if beat is None or not beat.alive:
+        return 1
+    return 0
+
+
+def cmd_service(args: argparse.Namespace) -> int:
+    from .service import build_plan, describe, install
+
+    # 등록될 명령에 지금 준 대상 조건을 그대로 실어 준다.
+    parts: list[str] = []
+    if args.date:
+        parts += [f"--date {d}" for d in args.date]
+    if args.nights:
+        parts.append(f"--nights {args.nights}")
+    if args.zones:
+        parts.append(f"--zones {args.zones}")
+    if args.exclude_zones:
+        parts.append(f"--exclude-zones {args.exclude_zones}")
+    if args.config != DEFAULT_CONFIG:
+        parts.append(f"-c {args.config}")
+    if args.selectors != DEFAULT_SELECTORS:
+        parts.append(f"-s {args.selectors}")
+
+    plan = build_plan(Path.cwd(), args.os_name, " ".join(parts))
+    if args.install:
+        install(plan)
+    else:
+        print("─" * 60)
+        print(plan.content.rstrip())
+        print("─" * 60)
+        print()
+    print(describe(plan, installed=args.install))
+    if not args.install:
+        print("\n실제로 만들려면: python -m paradogo service --install")
+    return 0
 
 
 def cmd_sniff(args: argparse.Namespace) -> int:
@@ -603,6 +666,8 @@ COMMANDS = {
     "watch": cmd_watch,
     "track": cmd_track,
     "stats": cmd_stats,
+    "status": cmd_status,
+    "service": cmd_service,
     "sniff": cmd_sniff,
     "snipe": cmd_snipe,
 }

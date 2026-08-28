@@ -129,6 +129,13 @@ class BookingFlow:
 
     async def login(self) -> None:
         """저장된 세션이 없거나 만료됐을 때 실제로 로그인한다."""
+        if not self.cfg.account.login_id or not self.cfg.account.password:
+            # 브라우저에서 직접 로그인한 경우 비밀번호가 설정에 없다. 빈 값으로
+            # 로그인 폼을 두드려 봐야 실패만 하므로, 무엇을 해야 하는지 바로 말한다.
+            raise LoginFailed(
+                "로그인 세션이 만료됐는데 자동 로그인에 쓸 아이디/비밀번호가 없습니다.\n"
+                "→ `python -m paradogo login --manual` 로 다시 로그인해 주세요. (1분이면 됩니다)"
+            )
         log.info("로그인 페이지로 이동: %s", self.cfg.site.login_url)
         await self.page.goto(self.cfg.site.login_url, wait_until="domcontentloaded")
         await self.dismiss_popups()

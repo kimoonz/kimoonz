@@ -222,3 +222,11 @@ def test_unknown_zone_is_fine_when_no_zone_requested():
 def test_zone_and_cabin_conditions_must_both_hold():
     # C구역은 원하지만 '디럭스'는 없다 → 아무것도 고르지 않는다.
     assert make_flow(["디럭스"], zones=["C"]).pick_offer(ZONED) is None
+
+
+def test_stale_state_threshold_is_long_enough_for_a_reboot():
+    # 하루 두 번 재시작하는 PC 를 전제로 한다. 재시작에 몇 분 걸려도
+    # 그 사이 취소를 잡아낼 수 있어야 하고, 반나절 공백은 걸러야 한다.
+    from paradogo.tracker import STALE_STATE_MINUTES
+
+    assert 10 <= STALE_STATE_MINUTES <= 180

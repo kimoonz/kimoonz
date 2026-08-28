@@ -63,8 +63,58 @@ python -m paradogo --date 2026-09-19 --nights 1 --zones C,D start
 설정이 끝난 뒤로는 이것만 기억하시면 됩니다.
 
 ```bash
-python -m paradogo track    # 취소 감시 시작
+python -m paradogo track --forever   # 계속 켜두기
+python -m paradogo status            # 지금 돌고 있나 확인
 ```
+
+## 계속 켜두기
+
+`--forever` 를 붙이면 멈춰도 알아서 다시 뜹니다.
+
+* 조회가 계속 실패하거나 예기치 못한 오류로 죽으면 **30초 → 최대 15분** 간격으로 재시작
+* 로그인 세션이 풀린 건 재시도로 낫지 않으므로, 알림을 보내고 기다립니다
+  (`python -m paradogo login --manual` 한 번이면 알아서 이어집니다)
+* 매 회차 상태를 남겨 다른 창에서 `status` 로 확인할 수 있습니다
+* 하루 한 번 "아직 지켜보는 중" 요약을 보냅니다 — 조용한 게 정상인지 죽은 건지 구분되게
+
+```
+$ python -m paradogo status
+● 감시 중 (PID 41207)
+  가동 시간   : 3일 2시간 11분
+  마지막 확인 : 4초 전 (13,208회차)
+  재고        : 240칸 중 2칸 예약가능
+  누적 취소   : 7건 · 재시작 2회
+  조회 경로   : api
+```
+
+### PC 를 켜면 자동으로 뜨게
+
+재부팅해도 알아서 살아나게 하려면 OS 에 등록합니다.
+
+```bash
+python -m paradogo service            # 무엇을 등록할지 먼저 보여줍니다
+python -m paradogo service --install  # 실제로 등록
+```
+
+Windows 는 작업 스케줄러(로그온 시 실행), macOS 는 launchd, Linux 는 systemd 사용자
+서비스로 등록됩니다. 지금 준 `--date` 같은 조건은 등록되는 명령에 그대로 실립니다.
+
+```bash
+python -m paradogo --date 2026-09-19 --nights 1 service --install
+```
+
+재시작 직후에는 이전 상태를 이어받아, **재시작하는 동안 나온 취소까지** 확인합니다
+(단, 한 시간 넘게 꺼져 있었다면 그동안의 변화를 전부 '방금 취소'로 알리지 않도록
+기준선으로만 씁니다).
+
+> **절전은 꺼두세요.** PC 가 잠들면 감시도 멈춥니다.
+> Windows: 설정 > 전원 및 절전 > 절전 모드 '안 함' /
+> macOS: 시스템 설정 > 배터리 > '디스플레이가 꺼져도 자동으로 잠자지 않음'
+
+> **백그라운드로 돌 때는 브라우저 창이 없습니다.** 취소를 잡으면 결제 화면을 띄워
+> 드릴 수 없으므로, 알림을 받고 **직접 홈페이지에 로그인해 '예약확인 / 결제대기'에서
+> 결제**하셔야 합니다. 결제 화면을 눈앞에 띄워 받고 싶다면, 서비스 등록 대신
+> 평소 쓰는 화면에서 터미널을 열어 `track --forever` 를 돌려 두세요.
 
 아래는 세부 설정을 직접 만지고 싶을 때 보는 내용입니다.
 
@@ -227,6 +277,8 @@ python -m paradogo doctor
 | `snipe` | 오픈 시각에 맞춰 예약 시도 (오픈런) |
 | `track` | **실시간 재고 추적 — 취소 순간을 잡는다** |
 | `stats` | 추적 이력 통계 |
+| `status` | 감시가 지금 돌고 있는지 확인 |
+| `service` | PC 를 켜면 자동으로 뜨도록 등록 |
 | `watch` | 단순 반복 확인 (`track` 이 있으면 보통 필요 없음) |
 
 전역 옵션은 **하위 명령 앞**에 씁니다: `python -m paradogo --dry-run snipe`
@@ -373,7 +425,9 @@ python -m paradogo stats
 | 2박이 안 잡힘 | `booking.checkout_cell`(또는 `nights_select` / `nights_button`) 확인. 로그에 "체크아웃 …를 눌러 N박으로 맞췄습니다" 가 찍히는지 보세요 |
 | 알림이 안 옴 | `python -m paradogo notify-test` 로 채널부터 확인 |
 | `scan` 이 아무것도 못 찾음 | 셀렉터/`api` 설정 문제. 여기서 안 되면 `track`·`snipe` 도 안 됩니다 |
-| 추적이 조용함 | `stats` 의 폴링 성공률을 보세요. 낮으면 취소가 없는 게 아니라 조회가 실패 중입니다 |
+| 추적이 조용함 | 먼저 `status` 로 살아 있는지 보세요. 그다음 `stats` 의 폴링 성공률 — 낮으면 취소가 없는 게 아니라 조회가 실패 중입니다 |
+| 자고 일어나니 꺼져 있음 | PC 절전 때문입니다. 절전을 끄고 `service --install` 로 등록하세요 |
+| "다시 로그인이 필요합니다" 알림 | `python -m paradogo login --manual` 한 번이면 감시가 알아서 이어집니다 |
 | 취소를 계속 놓침 | `stats` 의 '살아 있던 시간'보다 폴링 주기가 길다는 뜻. `sniff` 로 API를 찾아 주기를 줄이세요 |
 
 실패하면 `.artifacts/` 에 스크린샷과 HTML이 남습니다. 셀렉터를 고칠 때 그걸 보세요.
@@ -394,6 +448,8 @@ paradogo/
   store.py      추적 이력 (SQLite): 현재 상태 · 전환 로그 · 폴링 건강도
   tracker.py    실시간 추적 루프 + 취소 확보
   dashboard.py  터미널 달력 대시보드
+  supervisor.py 계속 켜두기 — 재시작·상태 기록·하루 요약
+  service.py    systemd / launchd / 작업 스케줄러 등록 파일 생성
   wizard.py     `start` 설치 마법사 — 화면을 관찰해 설정을 자동 생성
   zones.py      구역(A~H) 인식과 우선순위
   scan.py       읽기 전용 조회
@@ -424,3 +480,6 @@ python -m pytest
 * `sniff`: 목업의 XHR을 엿들어 재고 API와 응답 구조(구역 필드 포함)를 자동 추출
 * `start` 마법사: 4단계를 전부 거쳐 config.yaml / selectors.yaml 을 자동 생성하고,
   그 파일만으로 조회가 되는지까지 확인
+* 상시 감시: `--forever` 로 띄운 상태에서 사이트를 죽여 조회를 연속 실패시키자
+  감시가 중단됐다가 자동으로 재시작했고, 사이트를 되살리자 직전 상태를 이어받아
+  다시 감시로 복귀 — 그동안 `status` 가 살아 있음/죽음을 정확히 보고
