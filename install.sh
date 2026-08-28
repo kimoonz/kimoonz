@@ -22,38 +22,44 @@ say "=================================================="
 say ""
 
 if [ -d "$DEST" ]; then
-  say "이미 폴더가 있습니다: $DEST"
-  printf '지우고 새로 받을까요? 기존 설정과 로그인 정보는 사라집니다 (y/N): '
-  read -r answer < /dev/tty || answer=""
-  case "$answer" in
-    [yY]*) rm -rf "$DEST" ;;
-    *)     say "기존 폴더를 그대로 씁니다." ;;
-  esac
+  say "이미 설치돼 있습니다: $DEST"
+  say "코드만 최신으로 바꾸고, 설정과 로그인 정보는 그대로 둡니다."
+  UPDATING=1
+else
+  say "새로 설치합니다: $DEST"
+  UPDATING=0
+fi
+say ""
+
+say "코드를 내려받는 중…"
+tmp="$(mktemp -d)" || fail "임시 폴더를 만들지 못했습니다."
+trap 'rm -rf "$tmp"' EXIT
+
+url="https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH"
+if ! curl -fsSL "$url" -o "$tmp/src.tar.gz"; then
+  fail "코드를 내려받지 못했습니다. 인터넷 연결을 확인해 주세요."
 fi
 
-if [ ! -d "$DEST" ]; then
-  say "코드를 내려받는 중… ($REPO)"
-  tmp="$(mktemp -d)" || fail "임시 폴더를 만들지 못했습니다."
-  trap 'rm -rf "$tmp"' EXIT
+# 내려받은 압축에는 설정(config.yaml)도, 로그인 세션(.state)도, 파이썬 환경(.venv)도
+# 들어 있지 않다. 그래서 그냥 덮어써도 쓰던 것이 지워지지 않는다.
+# 폴더째 지우는 방식은 쓰지 않는다 — 그 폴더 안에서 실행하면 지울 수 없고,
+# 무엇보다 설정과 로그인 정보가 날아간다.
+mkdir -p "$DEST"
+if ! tar -xzf "$tmp/src.tar.gz" -C "$DEST" --strip-components=1; then
+  fail "압축을 푸는 데 실패했습니다."
+fi
 
-  url="https://codeload.github.com/$REPO/tar.gz/refs/heads/$BRANCH"
-  if ! curl -fsSL "$url" -o "$tmp/src.tar.gz"; then
-    fail "코드를 내려받지 못했습니다. 인터넷 연결을 확인해 주세요."
-  fi
-  # 압축을 풀면 'kimoonz-<브랜치이름>' 처럼 한 겹 더 들어가 있다.
-  mkdir -p "$DEST"
-  if ! tar -xzf "$tmp/src.tar.gz" -C "$DEST" --strip-components=1; then
-    rm -rf "$DEST"
-    fail "압축을 푸는 데 실패했습니다."
-  fi
+if [ "$UPDATING" = "1" ]; then
+  say "최신 코드로 바꿨습니다. (설정과 로그인 정보는 그대로)"
+else
   say "받았습니다: $DEST"
 fi
 
 say ""
 [ -f "$DEST/setup.sh" ] || fail "설치 파일을 찾지 못했습니다: $DEST/setup.sh"
-chmod +x "$DEST/setup.sh" "$DEST/watch.sh" "$DEST/status.sh" 2>/dev/null
+chmod +x "$DEST"/*.sh 2>/dev/null
 
-say "이어서 설치를 시작합니다. (처음 한 번은 몇 분 걸립니다)"
+say "이어서 준비를 시작합니다. (처음 한 번은 몇 분 걸립니다)"
 say ""
 
 cd "$DEST" || fail "폴더로 이동하지 못했습니다: $DEST"

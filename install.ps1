@@ -1,11 +1,10 @@
-# 파라다이스 도고 캐빈 예약 도우미 — Windows 한 줄 설치
+# 파라다이스 도고 캐빈 예약 도우미 — Windows 설치 / 업데이트
 #
 # PowerShell 을 열고 아래 한 줄을 붙여넣으세요.
 #
 #   irm https://raw.githubusercontent.com/kimoonz/kimoonz/claude/paradise-dogo-cabin-booking-y5lryk/install.ps1 | iex
 #
-# 하는 일: 내 문서 폴더에 코드를 내려받고 setup.bat 을 실행합니다.
-# (무엇을 하는지 먼저 보고 싶으면 위 주소를 브라우저로 열어 읽어 보세요)
+# 이미 설치돼 있으면 코드만 최신으로 바꾸고, 설정과 로그인 정보는 그대로 둡니다.
 
 $ErrorActionPreference = 'Stop'
 
@@ -23,60 +22,72 @@ function Die($msg) {
 }
 
 Say '=================================================='
-Say ' 파라다이스 도고 캐빈 예약 도우미 - 설치'
+Say ' 파라다이스 도고 캐빈 예약 도우미'
 Say '=================================================='
 Say ''
 
-# TLS 1.2 를 켜지 않으면 구버전 PowerShell 에서 GitHub 접속이 막힌다.
+# 구버전 PowerShell 은 TLS 1.2 를 켜지 않으면 GitHub 에 붙지 못한다.
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
-if (Test-Path $Dest) {
-    Say "이미 폴더가 있습니다: $Dest"
-    $answer = Read-Host '지우고 새로 받을까요? 기존 설정과 로그인 정보는 사라집니다 (y/N)'
-    if ($answer -notmatch '^[yY]') {
-        Say ''
-        Say '기존 폴더를 그대로 씁니다.'
-    } else {
-        Remove-Item -Recurse -Force $Dest
-    }
+$isUpdate = Test-Path $Dest
+if ($isUpdate) {
+    Say "이미 설치돼 있습니다: $Dest"
+    Say '코드만 최신으로 바꾸고, 설정과 로그인 정보는 그대로 둡니다.'
+} else {
+    Say "새로 설치합니다: $Dest"
 }
-
-if (-not (Test-Path $Dest)) {
-    $zipUrl = "https://codeload.github.com/$Repo/zip/refs/heads/$Branch"
-    $zip    = Join-Path $env:TEMP 'paradogo.zip'
-    $tmpDir = Join-Path $env:TEMP 'paradogo-unzip'
-
-    Say "코드를 내려받는 중... ($Repo)"
-    try {
-        Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
-    } catch {
-        Die "코드를 내려받지 못했습니다. 인터넷 연결을 확인해 주세요.`n$($_.Exception.Message)"
-    }
-
-    if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
-    try {
-        Expand-Archive -Path $zip -DestinationPath $tmpDir -Force
-    } catch {
-        Die "압축을 푸는 데 실패했습니다.`n$($_.Exception.Message)"
-    }
-
-    # 압축을 풀면 'kimoonz-<브랜치이름>' 처럼 한 겹 더 들어가 있다.
-    $inner = Get-ChildItem $tmpDir -Directory | Select-Object -First 1
-    if (-not $inner) { Die '내려받은 파일이 비어 있습니다.' }
-
-    New-Item -ItemType Directory -Force -Path (Split-Path $Dest) | Out-Null
-    Move-Item $inner.FullName $Dest
-    Remove-Item -Recurse -Force $tmpDir, $zip -ErrorAction SilentlyContinue
-    Say "받았습니다: $Dest"
-}
-
 Say ''
+
+# --- 내려받기 ---------------------------------------------------------------
+$zipUrl = "https://codeload.github.com/$Repo/zip/refs/heads/$Branch"
+$zip    = Join-Path $env:TEMP 'paradogo.zip'
+$tmpDir = Join-Path $env:TEMP 'paradogo-unzip'
+
+Say '코드를 내려받는 중...'
+try {
+    Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing
+} catch {
+    Die "코드를 내려받지 못했습니다. 인터넷 연결을 확인해 주세요.`n$($_.Exception.Message)"
+}
+
+if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
+try {
+    Expand-Archive -Path $zip -DestinationPath $tmpDir -Force
+} catch {
+    Die "압축을 푸는 데 실패했습니다.`n$($_.Exception.Message)"
+}
+
+# 압축을 풀면 'kimoonz-<브랜치이름>' 처럼 한 겹 더 들어가 있다.
+$inner = Get-ChildItem $tmpDir -Directory | Select-Object -First 1
+if (-not $inner) { Die '내려받은 파일이 비어 있습니다.' }
+
+# --- 덮어쓰기 ---------------------------------------------------------------
+# 내려받은 압축에는 설정(config.yaml)도, 로그인 세션(.state)도, 파이썬 환경(.venv)도
+# 들어 있지 않다. 그래서 그냥 덮어써도 쓰던 것이 지워지지 않는다.
+# 폴더째 지우는 방식은 쓰지 않는다 — 그 폴더 안에서 실행하면 Windows 가 잠가 실패하고,
+# 무엇보다 설정과 로그인 정보가 날아간다.
+New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+try {
+    Copy-Item -Path (Join-Path $inner.FullName '*') -Destination $Dest -Recurse -Force
+} catch {
+    Die @"
+코드를 덮어쓰지 못했습니다.
+프로그램 창이 열려 있으면 닫고 다시 실행해 주세요.
+$($_.Exception.Message)
+"@
+}
+Remove-Item -Recurse -Force $tmpDir, $zip -ErrorAction SilentlyContinue
+
+if ($isUpdate) { Say '최신 코드로 바꿨습니다. (설정과 로그인 정보는 그대로)' }
+else           { Say "받았습니다: $Dest" }
+Say ''
+
+# --- 이어서 설치 ------------------------------------------------------------
 $setup = Join-Path $Dest 'setup.bat'
 if (-not (Test-Path $setup)) { Die "설치 파일을 찾지 못했습니다: $setup" }
 
-Say '이어서 설치를 시작합니다. (처음 한 번은 몇 분 걸립니다)'
+Say '이어서 준비를 시작합니다. (처음 한 번은 몇 분 걸립니다)'
 Say ''
 
-# 설정 마법사가 키보드 입력을 받아야 하므로 같은 창에서 이어 실행한다.
 Set-Location $Dest
 & cmd /c $setup
