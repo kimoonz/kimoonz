@@ -56,6 +56,18 @@ def _build_engine(cfg: Config, dry_run: bool) -> Engine:
 # ---------------------------------------------------------------- 서브커맨드
 def cmd_once(args, cfg: Config) -> int:
     engine = _build_engine(cfg, args.dry_run)
+
+    # 전략 배분이 먼저 — 수익 구조의 핵심이다
+    if cfg.strategy.enabled and not args.no_strategy:
+        try:
+            if engine.run_strategy() == 0:
+                engine.send_portfolio()
+        except Exception as exc:
+            print(f"전략 배분 점검 실패: {exc}", file=sys.stderr)
+
+    closed = engine.check_exits()
+    if closed:
+        print(f"청산 {closed}건 처리")
     results = engine.evaluate_all(refit=True)
     if not results:
         print("평가된 종목이 없습니다. 네트워크/심볼을 확인하세요.", file=sys.stderr)
@@ -159,6 +171,107 @@ def _tune_table(cfg: Config, model: InstrumentModel, preds: pd.DataFrame) -> pd.
     return pd.DataFrame(rows)
 
 
+def cmd_plan(args, cfg: Config) -> int:
+    """계좌 규모로 이 전략을 어떻게 굴릴 수 있는지."""
+    import numpy as np
+
+    from .strategy import (StrategyParams, affordable_instruments, evaluate,
+                           performance, suggest_target_vol, target_weights)
+
+    equity = args.equity or cfg.account.equity_usd
+    loader = DataLoader(cfg.data.cache_dir, 10_000, cfg.data.source)
+    instruments = [get_instrument(k) for k in cfg.instruments]
+    prices, point_values = {}, {}
+    for inst in instruments:
+        try:
+            prices[inst.key] = loader.get(inst.yahoo, "1d", 7300)["close"]
+            point_values[inst.key] = inst.micro.point_value
+        except Exception as exc:
+            print(f"  {inst.name} 데이터 실패: {exc}")
+    if not prices:
+        print("시세를 가져오지 못했습니다.", file=sys.stderr)
+        return 1
+    px = pd.DataFrame(prices).ffill()
+
+    print(f"계좌 ${equity:,.0f} 기준\n")
+    print("1계약 명목가치 (마이크로)")
+    for inst in instruments:
+        if inst.key not in px:
+            continue
+        notional = float(px[inst.key].iloc[-1]) * inst.micro.point_value
+        share = notional / equity
+        mark = "  ⚠️ 계좌의 절반 초과" if share > 0.5 else ""
+        print(f"  {inst.micro.code:5s} {inst.name:10s} ${notional:>10,.0f}"
+              f"  (계좌의 {share:>5.0%}){mark}")
+
+    ok = affordable_instruments(px, point_values, equity)
+    print(f"\n분산에 쓸 수 있는 종목: "
+          f"{', '.join(get_instrument(k).micro.code for k in ok) if ok else '없음'}")
+    if len(ok) < 2:
+        print("  ⚠️ 2종목 미만이면 분산 효과가 없습니다. 이 구조의 핵심이 분산인데,")
+        print("     계좌 대비 계약이 너무 커서 나눠 담을 수가 없는 상태입니다.")
+
+    base = StrategyParams(trend_fast=cfg.strategy.trend_fast,
+                          trend_slow=cfg.strategy.trend_slow,
+                          vol_window=cfg.strategy.vol_window,
+                          max_scale=cfg.strategy.max_scale)
+    split = pd.Timestamp("2018-01-01", tz="UTC")
+    print("\n목표 변동성별 예상 (2018년 이후 = 표본외 구간, 왕복 2bp 차감)")
+    rows = []
+    for tv in (0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50):
+        params = StrategyParams(**{**base.__dict__, "target_vol": tv})
+        ret = evaluate(px, params, equity, point_values)
+        stats = performance(ret[ret.index >= split])
+        if not stats:
+            continue
+        contracts = np.floor((target_weights(px, params) * equity)
+                             / (px * pd.Series(point_values))).clip(lower=0)
+        rows.append({
+            "목표변동성": f"{tv:.0%}", "연수익": f"{stats['연수익']:.1%}",
+            "샤프": round(stats["샤프"], 2),
+            "최대낙폭": f"{stats['최대낙폭']:.1%}",
+            "칼마": round(stats["칼마"], 2) if np.isfinite(stats["칼마"]) else None,
+            "평균계약": round(float(contracts.sum(axis=1).tail(2520).mean()), 1),
+        })
+    table = pd.DataFrame(rows)
+    print(table.to_string(index=False) if len(table) else "  계산 불가")
+
+    auto = suggest_target_vol(px, point_values, equity, base)
+    print(f"\n자동 추천: 목표 변동성 {auto:.0%}"
+          f"  (config.yaml 의 strategy.target_vol 에 넣으면 고정됩니다)")
+    print("\n※ 목표 변동성은 낙폭에 거의 비례합니다. 위 표에서 감당할 수 있는")
+    print("  최대낙폭을 먼저 고르고, 그 줄의 목표 변동성을 쓰세요.")
+    return 0
+
+
+def cmd_strategy(args, cfg: Config) -> int:
+    """전략 현재 상태 확인 / 알림 발송."""
+    engine = _build_engine(cfg, args.dry_run)
+    if args.portfolio:
+        engine.send_portfolio()
+        return 0
+    sent = engine.run_strategy()
+    if sent == 0:
+        print("배분 변경 없음 — 현재 상태:")
+        print()
+        engine.send_portfolio()
+    return 0
+
+
+def cmd_positions(args, cfg: Config) -> int:
+    """지금 보유 중인 것으로 추적되는 포지션."""
+    from .message import format_positions
+
+    state = AlertState.load(cfg.state_dir)
+    positions = state.all_positions()
+    print(_plain(format_positions(positions)))
+    if positions and args.clear:
+        for pos in positions:
+            state.close_position(pos.instrument, pos.timeframe)
+        print(f"\n{len(positions)}건을 기록에서 지웠습니다.")
+    return 0
+
+
 def cmd_telegram_test(args, cfg: Config) -> int:
     tg = Telegram(cfg.telegram_token, cfg.telegram_chat_id)
     if not tg.configured:
@@ -212,7 +325,7 @@ def _plain(html_text: str) -> str:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="bayesfutures",
-        description="확률(베이지안) 기반 해외선물 매매 타이밍 텔레그램 알림",
+        description="확률·추세 기반 해외선물 매매 타이밍 텔레그램 알림",
     )
     p.add_argument("-c", "--config", help="설정 파일 경로 (기본: config.yaml)")
     p.add_argument("-v", "--verbose", action="store_true", help="상세 로그")
@@ -222,6 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     once.add_argument("--dry-run", action="store_true", help="발송하지 않고 화면에만 출력")
     once.add_argument("--force", action="store_true", help="중복/쿨다운 무시하고 발송")
     once.add_argument("--briefing", action="store_true", help="신호 대신 전체 브리핑 발송")
+    once.add_argument("--no-strategy", action="store_true", help="전략 배분 점검 생략")
     once.set_defaults(func=cmd_once)
 
     watch = sub.add_parser("watch", help="상시 감시 (PC에 띄워두는 모드)")
@@ -237,6 +351,20 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--tune", action="store_true", help="임계치별 성과표 출력")
     bt.add_argument("--out", help="예측 결과 CSV 저장 경로")
     bt.set_defaults(func=cmd_backtest)
+
+    pl = sub.add_parser("plan", help="계좌 규모로 이 전략을 어떻게 굴릴지")
+    pl.add_argument("--equity", type=float, help="계좌 평가금 (기본: config.yaml 값)")
+    pl.set_defaults(func=cmd_plan)
+
+    st = sub.add_parser("strategy", help="추세·분산 배분 전략 점검 및 알림")
+    st.add_argument("--dry-run", action="store_true", help="발송하지 않고 화면에만 출력")
+    st.add_argument("--portfolio", action="store_true", help="현황만 출력")
+    st.set_defaults(func=cmd_strategy)
+
+    ps = sub.add_parser("positions", help="보유 중으로 추적되는 포지션 조회")
+    ps.add_argument("--clear", action="store_true",
+                    help="추적 기록을 모두 지운다 (실제 주문과 어긋났을 때)")
+    ps.set_defaults(func=cmd_positions)
 
     tt = sub.add_parser("telegram-test", help="텔레그램 연결 확인")
     tt.set_defaults(func=cmd_telegram_test)

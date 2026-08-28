@@ -79,11 +79,27 @@ class TimeframeConfig:
 
 
 @dataclass
+class StrategyConfig:
+    """추세·변동성·분산 배분 전략 (검증에서 수익이 확인된 구조)."""
+
+    enabled: bool = True
+    trend_fast: int = 126           # 빠른 추세 창 (영업일)
+    trend_slow: int = 252           # 느린 추세 창
+    vol_window: int = 60            # 실현변동성 측정 창
+    target_vol: float = 0.0         # 0이면 계좌 규모에 맞춰 자동 결정
+    max_scale: float = 3.0          # 종목별 비중 상한
+    min_delta_contracts: int = 1    # 비중 조정 알림 최소 계약 변화
+    rebalance_hour_kst: int = 8     # 배분 점검 시각 (하루 1회면 충분한 전략)
+
+
+@dataclass
 class AlertConfig:
     briefing_enabled: bool = True
     briefing_time_kst: str = "08:00"   # 매일 브리핑 시각 (한국시간)
     signal_alerts: bool = True
+    exit_alerts: bool = True          # 목표/손절/시간만료 도달 시 청산 알림
     send_on_hold: bool = False        # 관망도 개별 알림으로 보낼지
+    show_position_size: bool = False  # 계약 수 계산을 알림에 포함할지
     timezone: str = "Asia/Seoul"
 
 
@@ -104,6 +120,7 @@ class Config:
     costs: CostConfig = field(default_factory=CostConfig)
     data: DataConfig = field(default_factory=DataConfig)
     alerts: AlertConfig = field(default_factory=AlertConfig)
+    strategy: StrategyConfig = field(default_factory=StrategyConfig)
     timeframes: dict[str, TimeframeConfig] = field(
         default_factory=lambda: {
             "daily": TimeframeConfig(interval="1d", lookback_days=7300),
@@ -169,6 +186,7 @@ def load_config(path: str | Path | None = None) -> Config:
         ("costs", CostConfig),
         ("data", DataConfig),
         ("alerts", AlertConfig),
+        ("strategy", StrategyConfig),
     ):
         if name in raw:
             setattr(cfg, name, _build(cls, raw[name]))

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from .positions import OpenPosition
+
 log = logging.getLogger(__name__)
 
 
@@ -26,7 +28,7 @@ class AlertState:
     def load(cls, state_dir: str | Path) -> "AlertState":
         path = Path(state_dir) / "alerts.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        data: dict = {"signals": {}, "briefing": {}, "started": None}
+        data: dict = {"signals": {}, "briefing": {}, "positions": {}, "allocations": {}, "started": None}
         if path.exists():
             try:
                 loaded = json.loads(path.read_text(encoding="utf-8"))
@@ -88,6 +90,61 @@ class AlertState:
             "date": today.isoformat(),
             "sent_at": datetime.now(timezone.utc).isoformat(),
         }
+        self.save()
+
+    # ------------------------------------------------------- 보유 포지션 추적
+    def open_position(self, pos: OpenPosition) -> None:
+        self.data.setdefault("positions", {})[self._key(pos.instrument, pos.timeframe)] = \
+            pos.to_dict()
+        self.save()
+
+    def get_position(self, instrument: str, timeframe: str) -> OpenPosition | None:
+        raw = self.data.get("positions", {}).get(self._key(instrument, timeframe))
+        if not raw:
+            return None
+        try:
+            return OpenPosition.from_dict(raw)
+        except (TypeError, KeyError):
+            log.warning("포지션 기록이 손상되어 무시합니다: %s/%s", instrument, timeframe)
+            return None
+
+    def close_position(self, instrument: str, timeframe: str) -> None:
+        self.data.get("positions", {}).pop(self._key(instrument, timeframe), None)
+        self.save()
+
+    def all_positions(self) -> list[OpenPosition]:
+        out = []
+        for raw in list(self.data.get("positions", {}).values()):
+            try:
+                out.append(OpenPosition.from_dict(raw))
+            except (TypeError, KeyError):
+                continue
+        return out
+
+    # ------------------------------------------------------- 전략 배분 보유 현황
+    def get_allocation(self, instrument: str) -> dict:
+        return self.data.get("allocations", {}).get(instrument, {})
+
+    def held_contracts(self) -> dict[str, int]:
+        return {k: int(v.get("contracts", 0))
+                for k, v in self.data.get("allocations", {}).items()}
+
+    def set_allocation(self, instrument: str, contracts: int, price: float,
+                       when: datetime, target_weight: float = 0.0) -> None:
+        allocations = self.data.setdefault("allocations", {})
+        if contracts <= 0:
+            allocations.pop(instrument, None)
+        else:
+            prev = allocations.get(instrument, {})
+            allocations[instrument] = {
+                "contracts": int(contracts),
+                "price": float(price),
+                "target_weight": float(target_weight),
+                # 신규 진입일 때만 진입가를 새로 쓴다 (증량은 기존 진입가 유지)
+                "entry_price": float(prev.get("entry_price", price)) if prev else float(price),
+                "entry_date": prev.get("entry_date") or when.isoformat(),
+                "updated": when.isoformat(),
+            }
         self.save()
 
     def mark_start(self) -> None:

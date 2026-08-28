@@ -103,6 +103,7 @@ def test_undersized_account_warning_states_requirement(tmp_path):
     from bayesfutures.signals import build_signal
 
     cfg = Config()
+    cfg.alerts.show_position_size = True
     cfg.account.equity_usd = 30_000
     pred = Prediction(GOLD, "daily", "1d", pd.Timestamp("2026-08-27", tz="UTC"),
                       4600.0, 4600.0, 68.85, 0.90, 0.0, [], None, [], 1500, 0.5, 0.5)
@@ -123,6 +124,7 @@ def test_confidence_blocked_size_says_so_instead(tmp_path):
     from bayesfutures.signals import build_signal
 
     cfg = Config()
+    cfg.alerts.show_position_size = True
     cfg.account.equity_usd = 80_000          # 한도 $800 > 1계약 리스크 $688
     pred = Prediction(GOLD, "daily", "1d", pd.Timestamp("2026-08-27", tz="UTC"),
                       4600.0, 4600.0, 68.85, 0.634, 0.0, [], None, [], 1500, 0.5, 0.55)
@@ -133,3 +135,22 @@ def test_confidence_blocked_size_says_so_instead(tmp_path):
     assert "신뢰도 스케일링으로 0계약" in text
     assert "한도를 다 쓰면 MGC 1계약" in text
     assert "1계약도 리스크 한도를 넘습니다" not in text
+
+
+def test_sizing_block_is_off_by_default():
+    """계약 수 계산은 기본적으로 안 보여준다 — 타이밍이 핵심."""
+    import re
+
+    import pandas as pd
+
+    from bayesfutures.instruments import GOLD
+    from bayesfutures.message import format_signal
+    from bayesfutures.model import Prediction
+    from bayesfutures.signals import build_signal
+
+    cfg = Config()
+    pred = Prediction(GOLD, "daily", "1d", pd.Timestamp("2026-08-27", tz="UTC"),
+                      4600.0, 4600.0, 68.85, 0.70, 0.0, [], None, [], 1500, 0.5, 0.5)
+    text = re.sub(r"<[^>]+>", "", format_signal(cfg, build_signal(cfg, pred)))
+    assert "계약 수" not in text
+    assert "청산" in text and "익절" in text and "손절" in text

@@ -67,3 +67,111 @@ def test_active_timeframes_respects_enabled(tmp_path):
     eng = _engine(tmp_path)
     eng.cfg.timeframes["hourly"].enabled = False
     assert eng.active_timeframes() == ["daily"]
+
+
+# ---------------------------------------------------------------- 포지션 생애주기
+def _signal(cfg, prob, tf="daily", price=100.0, atr=5.0, asof="2025-06-02"):
+    import pandas as pd
+
+    from bayesfutures.instruments import GOLD
+    from bayesfutures.model import Prediction
+    from bayesfutures.signals import build_signal
+
+    pred = Prediction(GOLD, tf, cfg.timeframes[tf].interval,
+                      pd.Timestamp(asof, tz="UTC"), price, price, atr,
+                      prob, 0.0, [], None, [], 1500, 0.5, 0.5)
+    return build_signal(cfg, pred)
+
+
+class _StubModel:
+    """엔진이 기대하는 최소한의 모델 — 시세만 들고 있다."""
+
+    def __init__(self, df):
+        self.df = df
+
+    def load(self, force=False):
+        pass
+
+
+def _with_bars(engine, highs, lows, start="2025-06-02"):
+    import pandas as pd
+
+    n = len(highs)
+    idx = pd.date_range(start, periods=n, freq="1D", tz="UTC")
+    closes = [(h + l) / 2 for h, l in zip(highs, lows)]
+    df = pd.DataFrame({"open": closes, "high": highs, "low": lows,
+                       "close": closes, "volume": [1.0] * n}, index=idx)
+    engine.models[("gold", "daily")] = _StubModel(df)
+    return df
+
+
+def test_signal_opens_a_tracked_position(tmp_path):
+    eng = _engine(tmp_path)
+    sig = _signal(eng.cfg, 0.70)
+    assert eng.send_signals({"gold": {"daily": sig}}) == 1
+    pos = eng.state.get_position("gold", "daily")
+    assert pos is not None and pos.side == "LONG"
+    assert pos.entry == sig.entry and pos.target == sig.target
+
+
+def test_no_reentry_while_holding_same_direction(tmp_path):
+    eng = _engine(tmp_path)
+    eng.send_signals({"gold": {"daily": _signal(eng.cfg, 0.70)}})
+    again = _signal(eng.cfg, 0.72, asof="2025-06-20")     # 쿨다운은 지난 시점
+    assert eng.send_signals({"gold": {"daily": again}}) == 0
+
+
+def test_opposite_signal_closes_then_reverses(tmp_path):
+    eng = _engine(tmp_path)
+    eng.send_signals({"gold": {"daily": _signal(eng.cfg, 0.70)}})
+    flip = _signal(eng.cfg, 0.25, asof="2025-06-20")
+    assert eng.send_signals({"gold": {"daily": flip}}) == 1
+    pos = eng.state.get_position("gold", "daily")
+    assert pos.side == "SHORT"
+
+
+def test_check_exits_closes_on_target(tmp_path):
+    eng = _engine(tmp_path)
+    sig = _signal(eng.cfg, 0.70, price=100.0, atr=5.0)   # 목표 105, 손절 95
+    eng.send_signals({"gold": {"daily": sig}})
+    _with_bars(eng, highs=[100, 101, 106], lows=[99, 98, 100])
+    assert eng.check_exits() == 1
+    assert eng.state.get_position("gold", "daily") is None
+
+
+def test_check_exits_leaves_open_position_alone(tmp_path):
+    eng = _engine(tmp_path)
+    eng.send_signals({"gold": {"daily": _signal(eng.cfg, 0.70)}})
+    _with_bars(eng, highs=[100, 101, 102], lows=[99, 98, 97])
+    assert eng.check_exits() == 0
+    assert eng.state.get_position("gold", "daily") is not None
+
+
+def test_positions_survive_restart(tmp_path):
+    """PC 재시작 후에도 보유 포지션 감시가 이어져야 한다."""
+    eng = _engine(tmp_path)
+    eng.send_signals({"gold": {"daily": _signal(eng.cfg, 0.70)}})
+
+    revived = _engine(tmp_path)                          # 새 프로세스 흉내
+    assert revived.state.get_position("gold", "daily") is not None
+    _with_bars(revived, highs=[100, 101, 106], lows=[99, 98, 100])
+    assert revived.check_exits() == 1
+
+
+def test_exit_alerts_can_be_disabled_but_position_still_closes(tmp_path):
+    eng = _engine(tmp_path)
+    eng.cfg.alerts.exit_alerts = False
+    eng.send_signals({"gold": {"daily": _signal(eng.cfg, 0.70)}})
+    _with_bars(eng, highs=[100, 101, 106], lows=[99, 98, 100])
+    assert eng.check_exits() == 1
+    assert eng.state.get_position("gold", "daily") is None
+
+
+def test_stale_position_for_unknown_instrument_is_dropped(tmp_path):
+    from bayesfutures.positions import OpenPosition
+
+    eng = _engine(tmp_path)
+    eng.state.open_position(OpenPosition("없는종목", "daily", "LONG", 1, 0.9, 1.1,
+                                         "2025-06-02T00:00:00+00:00", 10, 0.6, 0.1))
+    eng.check_exits()
+    assert eng.state.get_position("없는종목", "daily") is None
