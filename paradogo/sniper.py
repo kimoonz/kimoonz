@@ -14,7 +14,7 @@ from .clock import (
     ClockSync,
     humanize,
     next_open_datetime,
-    now_kst,
+    open_datetime_for_stay,
     sleep_until,
     sync_with_server,
     target_stay_month,
@@ -32,6 +32,7 @@ async def run_snipe(
     smap: SelectorMap,
     notifier: Notifier,
     open_at: datetime | None = None,
+    force: bool = False,
 ) -> BookingResult:
     open_cfg = cfg.run.open_time
     clock = ClockSync()
@@ -60,6 +61,23 @@ async def run_snipe(
             "이번 오픈에 열리지 않는 날짜가 섞여 있습니다: %s",
             ", ".join(d.isoformat() for d in off_month),
         )
+
+    # 오픈이 이미 지난 날짜는 오픈런으로 잡을 수 없다. 전부 그렇다면 헛수고다.
+    already = [
+        d for d in dates
+        if open_datetime_for_stay(d, open_cfg.day_of_month, open_cfg.hour, open_cfg.minute)
+        <= clock.server_now()
+    ]
+    if already and len(already) == len(dates) and not force:
+        message = (
+            "대상 날짜의 예약 오픈이 이미 지났습니다: "
+            + ", ".join(d.isoformat() for d in already)
+            + "\n오픈런으로는 잡을 수 없습니다. 취소표를 노리려면 "
+            "`python -m paradogo track` 을 쓰세요.\n"
+            "(그래도 강행하려면 --force)"
+        )
+        log.error("%s", message)
+        return BookingResult(ok=False, stage="failed", message=message)
 
     async with BrowserSession(cfg) as session:
         flow = BookingFlow(session, smap, cfg)

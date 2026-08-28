@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import date, datetime
 
 from . import __version__
 from .clock import (
@@ -14,6 +14,7 @@ from .clock import (
     humanize,
     next_open_datetime,
     now_kst,
+    open_datetime_for_stay,
     sync_with_server,
     target_stay_month,
 )
@@ -21,7 +22,7 @@ from urllib.parse import urlparse
 
 from .config import Config
 from .dashboard import supports_color
-from .errors import ParadogoError
+from .errors import ConfigError, ParadogoError
 from .notify import Notifier
 from .selectors import SelectorMap
 
@@ -68,6 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-dry-run", dest="dry_run", action="store_false",
                         help="실제로 결제 직전까지 진행")
     parser.set_defaults(dry_run=None)
+    parser.add_argument("--date", action="append", metavar="YYYY-MM-DD",
+                        help="대상 날짜를 설정 대신 직접 지정 (여러 번 쓸 수 있음)")
+    parser.add_argument("--nights", metavar="N[,N…]",
+                        help="박수 우선순위 (예: --nights 1 또는 --nights 2,1)")
+    parser.add_argument("--zones", metavar="A,B…", help="희망 구역 우선순위")
+    parser.add_argument("--exclude-zones", dest="exclude_zones", metavar="A,B…",
+                        help="제외할 구역")
 
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -111,18 +119,52 @@ def build_parser() -> argparse.ArgumentParser:
     p_snipe = sub.add_parser("snipe", help="오픈 시각에 맞춰 예약 시도")
     p_snipe.add_argument("--at", help="오픈 시각 직접 지정 (예: 2026-09-01T09:00:00)")
     p_snipe.add_argument("--now", action="store_true", help="기다리지 않고 즉시 1회 시도")
+    p_snipe.add_argument("--force", action="store_true",
+                         help="대상 날짜의 오픈이 이미 지났어도 강행")
 
     return parser
 
 
-def load_all(args: argparse.Namespace, need_selectors: bool = True):
-    cfg = Config.load(args.config)
+def _split(value: str) -> list[str]:
+    return [part.strip() for part in value.replace(" ", ",").split(",") if part.strip()]
+
+
+def apply_overrides(cfg: Config, args: argparse.Namespace) -> Config:
+    """명령줄 인자로 설정을 덮어쓴다.
+
+    doctor 를 포함한 모든 명령이 같은 오버라이드를 보도록 한곳에 모아 둔다.
+    (doctor 만 따로 설정을 읽으면 `--date` 를 준 것과 다른 값을 점검하게 된다.)
+    """
     if args.headless:
         cfg.run.headless = True
     if args.headful:
         cfg.run.headless = False
     if args.dry_run is not None:
         cfg.run.dry_run = args.dry_run
+
+    # 명령줄 오버라이드 — YAML 을 고치지 않고 바로 다른 날짜를 노릴 수 있게.
+    if args.date:
+        try:
+            cfg.target.check_in_dates = sorted({date.fromisoformat(d) for d in args.date})
+        except ValueError as exc:
+            raise ConfigError(f"--date 형식이 잘못됐습니다(YYYY-MM-DD): {exc}") from exc
+    if args.nights:
+        try:
+            nights = [int(n) for n in _split(args.nights)]
+        except ValueError as exc:
+            raise ConfigError(f"--nights 는 숫자여야 합니다: {args.nights}") from exc
+        if any(n < 1 for n in nights):
+            raise ConfigError("--nights 는 1 이상이어야 합니다.")
+        cfg.target.nights_options = list(dict.fromkeys(nights)) or [1]
+    if args.zones:
+        cfg.target.zones = _split(args.zones)
+    if args.exclude_zones:
+        cfg.target.exclude_zones = _split(args.exclude_zones)
+    return cfg
+
+
+def load_all(args: argparse.Namespace, need_selectors: bool = True):
+    cfg = apply_overrides(Config.load(args.config), args)
     smap = SelectorMap.load(args.selectors) if need_selectors else SelectorMap()
     return cfg, smap
 
@@ -150,7 +192,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     problems: list[str] = []
 
     try:
-        cfg = Config.load(args.config)
+        cfg = apply_overrides(Config.load(args.config), args)
     except ParadogoError as exc:
         print(f"[설정] ✗ {exc}")
         return 1
@@ -214,9 +256,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         problems.append("Playwright 미설치")
 
     open_cfg = cfg.run.open_time
-    nxt = next_open_datetime(now_kst(), open_cfg.day_of_month, open_cfg.hour, open_cfg.minute)
-    print(f"[오픈] 다음 오픈 {nxt.strftime('%Y-%m-%d %H:%M')} "
-          f"(남은 시간 {humanize((nxt - now_kst()).total_seconds())})")
+    now = now_kst()
+    nxt = next_open_datetime(now, open_cfg.day_of_month, open_cfg.hour, open_cfg.minute)
+    print(f"\n[오픈] 다음 오픈 {nxt.strftime('%Y-%m-%d %H:%M')} "
+          f"(남은 시간 {humanize((nxt - now).total_seconds())})")
+
+    passed = []
+    for stay in cfg.target.check_in_dates:
+        opened = open_datetime_for_stay(
+            stay, open_cfg.day_of_month, open_cfg.hour, open_cfg.minute
+        )
+        if opened <= now:
+            passed.append(stay)
+            print(f"       {stay} · 오픈 {opened:%Y-%m-%d %H:%M} — 이미 지남 → 취소표(track)만 가능")
+        else:
+            print(f"       {stay} · 오픈 {opened:%Y-%m-%d %H:%M} "
+                  f"({humanize((opened - now).total_seconds())} 후) → snipe 대상")
+    if passed and len(passed) == len(cfg.target.check_in_dates):
+        print("       ⚠ 모든 대상 날짜의 오픈이 지났습니다. `snipe` 대신 `track` 을 쓰세요.")
 
     if problems:
         print("\n확인이 필요한 항목:")
@@ -318,7 +375,7 @@ def cmd_snipe(args: argparse.Namespace) -> int:
             return 1
         open_at = parsed if parsed.tzinfo else parsed.replace(tzinfo=KST)
 
-    result = asyncio.run(run_snipe(cfg, smap, notifier, open_at=open_at))
+    result = asyncio.run(run_snipe(cfg, smap, notifier, open_at=open_at, force=args.force))
     print(result.message)
     return 0 if result.ok else 2
 

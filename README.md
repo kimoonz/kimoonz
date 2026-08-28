@@ -202,8 +202,46 @@ python -m paradogo doctor
 | `stats` | 추적 이력 통계 |
 | `watch` | 단순 반복 확인 (`track` 이 있으면 보통 필요 없음) |
 
-전역 옵션(`--headless`, `--dry-run` 등)은 **하위 명령 앞**에 씁니다:
-`python -m paradogo --dry-run snipe`
+전역 옵션은 **하위 명령 앞**에 씁니다: `python -m paradogo --dry-run snipe`
+
+| 전역 옵션 | 설명 |
+| --- | --- |
+| `--date YYYY-MM-DD` | 대상 날짜를 설정 대신 지정 (여러 번 가능) |
+| `--nights 2,1` | 박수 우선순위 |
+| `--zones C,D` / `--exclude-zones A` | 구역 우선순위 / 제외 |
+| `--dry-run` / `--no-dry-run` | 예약 클릭 여부 |
+| `--headless` / `--headful` | 브라우저 창 |
+
+YAML을 고치지 않고 바로 다른 날짜를 노릴 수 있습니다.
+
+```bash
+# 9월 19일(토) 1박 — C구역 우선, A구역 제외
+python -m paradogo --date 2026-09-19 --nights 1 --zones C,D --exclude-zones A track
+```
+
+### 어느 명령을 써야 하나 — 오픈이 지났는지부터 보세요
+
+캐빈파크는 **매달 1일에 다음 달** 예약을 엽니다. 즉 **9월 투숙분은 8월 1일 09:00**에
+이미 열렸습니다. 그 시각이 지난 날짜는 오픈런으로 잡을 수 없고, 취소가 나오기를
+기다리는 수밖에 없습니다.
+
+```bash
+python -m paradogo --date 2026-09-19 doctor
+```
+
+```
+[오픈] 다음 오픈 2026-09-01 09:00 (남은 시간 3일 14시간)
+       2026-09-19 · 오픈 2026-08-01 09:00 — 이미 지남 → 취소표(track)만 가능
+       ⚠ 모든 대상 날짜의 오픈이 지났습니다. `snipe` 대신 `track` 을 쓰세요.
+```
+
+| 상황 | 쓸 명령 |
+| --- | --- |
+| 오픈이 아직 안 왔다 | `snipe` (오픈런) — 정각에 잡는다 |
+| 오픈이 이미 지났다 | `track` (취소표 추적) — 누가 취소하기를 기다린다 |
+
+오픈이 지난 날짜로 `snipe` 를 돌리면 헛수고이므로 실행 자체를 막습니다
+(정말 강행하려면 `--force`).
 
 ### 오픈런
 
@@ -301,6 +339,7 @@ python -m paradogo stats
 | 로그인이 매번 다시 됨 | `login.success_marker` 가 잘못됨. 로그인 상태에서만 보이는 요소로 바꾸세요 |
 | 로그인 실패 | 캡차·본인확인 단계가 있으면 자동 로그인은 불가. `login` 을 `--headful` 로 돌려 직접 로그인한 뒤 세션을 저장하세요 |
 | 날짜를 못 찾음 | `booking.day_cell` 의 placeholder 확인. `{date}` `{day}` `{day_int}` `{compact}` 중 실제 DOM에 맞는 것 |
+| `snipe` 가 바로 멈춤 | 그 날짜의 오픈이 이미 지난 것. `track` 을 쓰세요 (`doctor` 가 날짜별로 알려줍니다) |
 | 결제 페이지 판정 실패 | `payment.marker` 를 결제 화면에만 있는 텍스트/요소로 바꾸세요 |
 | 구역이 전부 `미상` | `scan` 의 '구역 인식 결과' 확인 → `target.zone_pattern` 또는 `booking.room_zone` 지정 |
 | 2박이 안 잡힘 | `booking.checkout_cell`(또는 `nights_select` / `nights_button`) 확인. 로그에 "체크아웃 …를 눌러 N박으로 맞췄습니다" 가 찍히는지 보세요 |

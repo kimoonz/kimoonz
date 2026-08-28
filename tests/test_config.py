@@ -119,3 +119,22 @@ def test_partial_site_block_keeps_other_defaults():
     assert cfg.site.login_path == "/only-login"
     assert cfg.site.timezone == "Asia/Seoul"
     assert cfg.site.base_url == "https://www.paradisespa.co.kr"
+
+
+def test_cli_style_nights_override_dedupes(monkeypatch):
+    # --nights 2,1,2 처럼 중복이 들어와도 우선순위 순서는 유지된다.
+    raw = {**BASE, "target": {"check_in_dates": ["2026-09-19"], "nights_options": [2, 1, 2]}}
+    assert Config.from_dict(raw).target.nights_options == [2, 1]
+
+
+def test_nights_zero_or_negative_is_rejected():
+    for bad in ([0], [-1]):
+        raw = {**BASE, "target": {"check_in_dates": ["2026-09-19"], "nights_options": bad}}
+        with pytest.raises(ConfigError):
+            Config.from_dict(raw)
+
+
+def test_non_numeric_nights_is_rejected():
+    raw = {**BASE, "target": {"check_in_dates": ["2026-09-19"], "nights_options": ["이틀"]}}
+    with pytest.raises(ConfigError):
+        Config.from_dict(raw)

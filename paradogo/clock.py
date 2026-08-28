@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
@@ -51,6 +51,24 @@ def _with_day(dt: datetime, day: int) -> datetime:
     next_month = (dt.replace(day=1) + timedelta(days=32)).replace(day=1)
     last_day = (next_month - timedelta(days=1)).day
     return dt.replace(day=min(day, last_day))
+
+
+def open_datetime_for_stay(
+    stay_date: date,
+    day_of_month: int = 1,
+    hour: int = 9,
+    minute: int = 0,
+    tz: ZoneInfo = KST,
+) -> datetime:
+    """그 날짜의 예약이 열렸던(열릴) 시각.
+
+    캐빈파크는 매달 1일에 '다음 달' 예약을 연다. 즉 9월 투숙분은 8월 1일에 열린다.
+    이 시각이 이미 지났다면 오픈런으로는 잡을 수 없고 취소표를 노리는 수밖에 없다.
+    """
+    stay_first = datetime(stay_date.year, stay_date.month, 1, tzinfo=tz)
+    open_month = stay_first - timedelta(days=1)  # 전달 말일
+    base = open_month.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return _with_day(base.replace(day=1), day_of_month)
 
 
 def target_stay_month(open_dt: datetime) -> tuple[int, int]:
