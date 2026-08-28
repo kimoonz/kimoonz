@@ -67,6 +67,37 @@ python -m paradogo track --forever   # 계속 켜두기
 python -m paradogo status            # 지금 돌고 있나 확인
 ```
 
+### 자동 로그인
+
+상시 감시를 돌리면 세션은 언젠가 만료됩니다. 새벽에 풀렸는데 사람이 다시 로그인해야
+한다면 아침까지 감시가 멈춘 것이나 마찬가지입니다. 한 번 저장해 두면 알아서 다시
+로그인합니다.
+
+```bash
+python -m paradogo login --save
+```
+
+아이디를 묻고, 비밀번호는 **화면에 보이지 않게** 입력받은 뒤 저장하고,
+실제로 로그인이 되는지까지 확인합니다.
+
+| 저장 위치 | 조건 |
+| --- | --- |
+| **OS 키체인** (Windows 자격 증명 관리자 / macOS 키체인 / Linux Secret Service) | `pip install keyring` 이 돼 있을 때 |
+| `.state/credentials.json` (권한 600) | 키체인을 못 쓸 때 |
+
+파일로 저장되는 경우 **암호화가 아닙니다.** 그 PC 를 쓸 수 있는 사람은 읽을 수 있습니다.
+대신 `.state/` 는 통째로 git 에서 제외돼 있어 저장소에는 올라가지 않습니다.
+더 안전하게 하려면 `pip install keyring` 을 먼저 하세요.
+
+지우려면 `python -m paradogo login --forget`.
+
+> **설정 YAML 에는 절대 비밀번호를 적지 마세요.** 실수로 커밋되면 그대로 공개됩니다.
+> 이 도구는 YAML 에 비밀번호가 없어도 동작하도록 만들어져 있습니다.
+
+> **캡차·본인확인·간편로그인이 걸린 사이트라면 자동 로그인이 불가능합니다.**
+> 그때는 `login --manual` 로 직접 로그인해 세션을 저장해 두고, 세션이 풀리면
+> 알림을 받아 한 번 더 해주셔야 합니다.
+
 ## 계속 켜두기
 
 `--forever` 를 붙이면 멈춰도 알아서 다시 뜹니다.
@@ -271,7 +302,7 @@ python -m paradogo doctor
 | `next-open` | 다음 오픈 시각과 이때 열리는 투숙 월 계산 (서버 시계 기준) |
 | `discover` | 실제 화면에서 셀렉터 후보 수집 |
 | `sniff` | 재고 조회 API 찾기 (추적 속도 향상) |
-| `login` | 로그인 세션 저장 (`--manual` 로 직접 로그인) |
+| `login` | 로그인 (`--save` 자동 로그인 저장 / `--manual` 직접 로그인 / `--forget` 삭제) |
 | `scan` | **지금 예약 가능한 날짜만 조회 (읽기 전용)** |
 | `notify-test` | 알림 채널 테스트 발송 |
 | `snipe` | 오픈 시각에 맞춰 예약 시도 (오픈런) |
@@ -427,7 +458,9 @@ python -m paradogo stats
 | `scan` 이 아무것도 못 찾음 | 셀렉터/`api` 설정 문제. 여기서 안 되면 `track`·`snipe` 도 안 됩니다 |
 | 추적이 조용함 | 먼저 `status` 로 살아 있는지 보세요. 그다음 `stats` 의 폴링 성공률 — 낮으면 취소가 없는 게 아니라 조회가 실패 중입니다 |
 | 자고 일어나니 꺼져 있음 | PC 절전 때문입니다. 절전을 끄고 `service --install` 로 등록하세요 |
-| "다시 로그인이 필요합니다" 알림 | `python -m paradogo login --manual` 한 번이면 감시가 알아서 이어집니다 |
+| "다시 로그인이 필요합니다" 알림 | `login --save` 를 해두면 이 알림 자체가 안 옵니다. 캡차가 있는 사이트라면 `login --manual` 로 한 번 더 |
+| `No module named paradogo` | 저장소 폴더 밖에서 실행한 것입니다. `cd kimoonz` 후 다시 실행하세요 |
+| 처음부터 뭐가 안 됨 | `python -m paradogo doctor` — 설정 전에도 Python·Playwright·브라우저·접속을 점검합니다 |
 | 취소를 계속 놓침 | `stats` 의 '살아 있던 시간'보다 폴링 주기가 길다는 뜻. `sniff` 로 API를 찾아 주기를 줄이세요 |
 
 실패하면 `.artifacts/` 에 스크린샷과 HTML이 남습니다. 셀렉터를 고칠 때 그걸 보세요.
@@ -448,6 +481,7 @@ paradogo/
   store.py      추적 이력 (SQLite): 현재 상태 · 전환 로그 · 폴링 건강도
   tracker.py    실시간 추적 루프 + 취소 확보
   dashboard.py  터미널 달력 대시보드
+  credentials.py 로그인 정보 보관 (OS 키체인 우선)
   supervisor.py 계속 켜두기 — 재시작·상태 기록·하루 요약
   service.py    systemd / launchd / 작업 스케줄러 등록 파일 생성
   wizard.py     `start` 설치 마법사 — 화면을 관찰해 설정을 자동 생성
@@ -480,6 +514,9 @@ python -m pytest
 * `sniff`: 목업의 XHR을 엿들어 재고 API와 응답 구조(구역 필드 포함)를 자동 추출
 * `start` 마법사: 4단계를 전부 거쳐 config.yaml / selectors.yaml 을 자동 생성하고,
   그 파일만으로 조회가 되는지까지 확인
+* 자동 로그인: 세션을 지운 상태에서 저장해 둔 정보로 다시 로그인해 감시를 이어감.
+  설정에 계정 정보가 있을 때 / 보관소에만 있을 때 / 둘 다 없을 때(사람에게 알림)
+  세 경우 모두 확인
 * 상시 감시: `--forever` 로 띄운 상태에서 사이트를 죽여 조회를 연속 실패시키자
   감시가 중단됐다가 자동으로 재시작했고, 사이트를 되살리자 직전 상태를 이어받아
   다시 감시로 복귀 — 그동안 `status` 가 살아 있음/죽음을 정확히 보고

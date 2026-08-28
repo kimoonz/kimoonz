@@ -1,3 +1,7 @@
 playwright>=1.49
 PyYAML>=6.0
 requests>=2.31
+
+# 선택: 설치하면 로그인 정보를 OS 키체인에 보관합니다
+# (없으면 .state/ 안 파일에 권한 600 으로 저장됩니다)
+keyring>=24.0

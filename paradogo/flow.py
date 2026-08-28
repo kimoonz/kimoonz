@@ -18,6 +18,7 @@ from pathlib import Path
 
 from .browser import BrowserSession
 from .config import Config
+from .credentials import resolve as resolve_credentials
 from .errors import LoginFailed, SelectorNotFound
 from .zones import ZonePreference, extract_zone
 from .selectors import (
@@ -129,19 +130,26 @@ class BookingFlow:
 
     async def login(self) -> None:
         """저장된 세션이 없거나 만료됐을 때 실제로 로그인한다."""
-        if not self.cfg.account.login_id or not self.cfg.account.password:
-            # 브라우저에서 직접 로그인한 경우 비밀번호가 설정에 없다. 빈 값으로
-            # 로그인 폼을 두드려 봐야 실패만 하므로, 무엇을 해야 하는지 바로 말한다.
+        creds = resolve_credentials(
+            self.cfg.account.login_id,
+            self.cfg.account.password,
+            self.cfg.run.storage_state.parent,
+        )
+        if not creds.usable:
+            # 자동 로그인에 쓸 정보가 없다. 무엇을 해야 하는지 바로 말한다.
             raise LoginFailed(
                 "로그인 세션이 만료됐는데 자동 로그인에 쓸 아이디/비밀번호가 없습니다.\n"
-                "→ `python -m paradogo login --manual` 로 다시 로그인해 주세요. (1분이면 됩니다)"
+                "→ `python -m paradogo login --save` 로 한 번 저장해 두면, "
+                "다음부터는 알아서 다시 로그인합니다.\n"
+                "→ 캡차·본인확인이 걸린 사이트라면 `python -m paradogo login --manual` 로 "
+                "직접 로그인해 주세요."
             )
-        log.info("로그인 페이지로 이동: %s", self.cfg.site.login_url)
+        log.info("로그인 페이지로 이동: %s (%s)", self.cfg.site.login_url, creds.masked())
         await self.page.goto(self.cfg.site.login_url, wait_until="domcontentloaded")
         await self.dismiss_popups()
 
-        await fill(self.page, self.smap, "login.id_input", self.cfg.account.login_id)
-        await fill(self.page, self.smap, "login.pw_input", self.cfg.account.password)
+        await fill(self.page, self.smap, "login.id_input", creds.login_id)
+        await fill(self.page, self.smap, "login.pw_input", creds.password)
         await click(self.page, self.smap, "login.submit")
 
         try:

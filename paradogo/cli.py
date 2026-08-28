@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from datetime import date, datetime, timedelta
 
@@ -22,7 +23,7 @@ from urllib.parse import urlparse
 
 from pathlib import Path
 
-from .config import Config
+from .config import Config, SiteConfig
 from .dashboard import supports_color
 from .errors import ConfigError, ParadogoError
 from .notify import Notifier
@@ -90,6 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_login.add_argument(
         "--manual", action="store_true",
         help="자동 입력 대신 브라우저를 띄워 직접 로그인 (캡차·본인확인이 있으면 이쪽)",
+    )
+    p_login.add_argument(
+        "--save", action="store_true",
+        help="아이디·비밀번호를 저장해 두고 앞으로 자동 로그인 (OS 키체인 우선)",
+    )
+    p_login.add_argument(
+        "--forget", action="store_true", help="저장해 둔 로그인 정보를 지웁니다",
     )
 
     p_scan = sub.add_parser(
@@ -324,15 +332,95 @@ def cmd_start(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_doctor(args: argparse.Namespace) -> int:
+def check_environment() -> list[str]:
+    """설정이 있기 전에도 확인할 수 있는 것들. 처음 막혔을 때 여기부터 본다."""
     problems: list[str] = []
+    print("[환경]")
+    print(f"  Python      : {sys.version.split()[0]}  ({sys.executable})")
+    if sys.version_info < (3, 10):
+        problems.append("Python 3.10 이상이 필요합니다.")
+        print("              ✗ 3.10 이상이 필요합니다")
+
+    print(f"  실행 폴더    : {Path.cwd()}")
+    if not (Path.cwd() / "paradogo").is_dir():
+        print("              ✗ 이 폴더에 paradogo 가 없습니다 — 저장소 폴더에서 실행하세요")
+        problems.append(
+            "저장소 폴더(cd kimoonz) 안에서 실행해야 합니다. "
+            "'No module named paradogo' 오류가 나면 대부분 이것입니다."
+        )
+
+    try:
+        import playwright  # noqa: F401
+
+        print("  Playwright  : ✓ 설치됨")
+    except ImportError:
+        print("  Playwright  : ✗ 없음 → pip install -r requirements.txt")
+        problems.append("Playwright 미설치: pip install -r requirements.txt")
+        return problems
+
+    # 브라우저가 실제로 받아졌는지는 설치 폴더만 보면 된다.
+    # (드라이버를 띄워 확인하면 확인만 하고도 오류 로그가 남는다)
+    found = next((d for d in _browser_dirs() if d.is_dir()), None)
+    if found:
+        print(f"  크롬(브라우저): ✓ {found}")
+    else:
+        print("  크롬(브라우저): ✗ 없음 → python -m playwright install chromium")
+        problems.append("브라우저 미설치: python -m playwright install chromium")
+
+    return problems
+
+
+def _browser_dirs() -> list[Path]:
+    """Playwright 가 브라우저를 받아 두는 위치들."""
+    override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    roots = [Path(override)] if override else [
+        Path.home() / ".cache" / "ms-playwright",                       # Linux
+        Path.home() / "Library" / "Caches" / "ms-playwright",           # macOS
+        Path.home() / "AppData" / "Local" / "ms-playwright",            # Windows
+    ]
+    dirs: list[Path] = []
+    for root in roots:
+        try:
+            dirs.extend(sorted(root.glob("chromium*")))
+        except OSError:
+            continue
+    return dirs
+
+
+def check_network(base_url: str) -> list[str]:
+    import requests
+
+    print("\n[연결]")
+    try:
+        resp = requests.head(base_url, timeout=10, allow_redirects=True)
+        print(f"  {base_url} → {resp.status_code}")
+        return []
+    except Exception as exc:
+        print(f"  {base_url} → 접속 실패 ({type(exc).__name__})")
+        return [f"파라다이스 홈페이지에 접속하지 못했습니다: {exc}"]
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    problems = check_environment()
+
+    if not Path(args.config).exists():
+        problems += check_network(SiteConfig().base_url)
+        print(f"\n[설정] 아직 설정하지 않았습니다 ({args.config} 없음)")
+        print("\n다음을 실행하세요:")
+        print("  python -m paradogo --date 2026-09-19 --nights 1 start")
+        if problems:
+            print("\n먼저 해결해야 할 것:")
+            for item in problems:
+                print(f"  · {item}")
+        return 1
 
     try:
         cfg = apply_overrides(Config.load(args.config), args)
     except ParadogoError as exc:
-        print(f"[설정] ✗ {exc}")
+        print(f"\n[설정] ✗ {exc}")
         return 1
-    print(f"[설정] ✓ {args.config}")
+    problems += check_network(cfg.site.base_url)
+    print(f"\n[설정] ✓ {args.config}")
     print(f"       사이트     : {cfg.site.base_url}")
     print(f"       로그인 URL : {cfg.site.login_url}")
     print(f"       예약 URL   : {cfg.site.booking_url}")
@@ -437,10 +525,34 @@ def cmd_notify_test(args: argparse.Namespace) -> int:
 
 
 def cmd_login(args: argparse.Namespace) -> int:
+    import getpass
+
+    from . import credentials
     from .browser import BrowserSession
     from .flow import BookingFlow
 
     cfg, smap = load_all(args)
+    state_dir = cfg.run.storage_state.parent
+
+    if args.forget:
+        removed = credentials.clear(state_dir)
+        print("지웠습니다: " + (", ".join(removed) if removed else "(저장된 것 없음)"))
+        return 0
+
+    if args.save:
+        print("자동 로그인에 쓸 아이디·비밀번호를 저장합니다.")
+        print(f"저장 위치: {credentials.backend_name()}")
+        if credentials.backend_name() == "로컬 파일":
+            print("  ※ 이 PC 를 쓸 수 있는 사람은 읽을 수 있습니다(암호화가 아닙니다).")
+            print("     더 안전하게 하려면: pip install keyring")
+        login_id = input("아이디: ").strip()
+        password = getpass.getpass("비밀번호(화면에 안 보입니다): ")
+        if not login_id or not password:
+            print("아이디와 비밀번호가 모두 필요합니다.")
+            return 1
+        where = credentials.save(login_id, password, state_dir)
+        print(f"저장했습니다 → {where}")
+        print("이제 실제로 로그인이 되는지 확인합니다…")
     if args.manual and not args.headless:
         cfg.run.headless = False  # 사람이 봐야 로그인할 수 있다
 
@@ -456,7 +568,18 @@ def cmd_login(args: argparse.Namespace) -> int:
             print("이제 scan / track / snipe 은 이 세션을 재사용합니다.")
         return 0
 
-    return asyncio.run(main())
+    try:
+        code = asyncio.run(main())
+    except ParadogoError as exc:
+        print(f"\n로그인 실패: {exc}")
+        if args.save:
+            print("\n저장한 정보는 그대로 두었습니다. 아이디·비밀번호를 다시 확인하시고")
+            print("`python -m paradogo login --save` 로 다시 저장하거나,")
+            print("캡차·본인확인이 있으면 `python -m paradogo login --manual` 을 쓰세요.")
+        return 1
+    if args.save:
+        print("자동 로그인이 확인됐습니다. 세션이 풀려도 알아서 다시 로그인합니다.")
+    return code
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
