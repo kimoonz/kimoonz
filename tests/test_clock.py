@@ -78,3 +78,38 @@ def test_open_datetime_for_stay_respects_custom_open_time():
     assert open_datetime_for_stay(date(2026, 9, 19), day_of_month=5, hour=14) == dt(
         2026, 8, 5, 14, 0
     )
+
+
+def test_korea_timezone_falls_back_when_tzdata_is_missing(monkeypatch, caplog):
+    # Windows 에는 시간대 데이터베이스가 없어 ZoneInfo("Asia/Seoul") 이 실패한다.
+    # 그것 하나로 프로그램이 아예 뜨지 못하면 안 된다.
+    import zoneinfo
+
+    import paradogo.clock as clock
+
+    def explode(_key):
+        raise zoneinfo.ZoneInfoNotFoundError("No time zone found with key Asia/Seoul")
+
+    monkeypatch.setattr(clock, "ZoneInfo", explode)
+    tz = clock._korea_timezone()
+
+    from datetime import datetime, timedelta
+
+    assert tz.utcoffset(datetime(2026, 9, 19)) == timedelta(hours=9)
+    # 서머타임이 없으므로 계절이 달라도 같은 오프셋이어야 한다.
+    assert tz.utcoffset(datetime(2026, 1, 1)) == timedelta(hours=9)
+
+
+def test_fallback_timezone_gives_the_same_open_time_maths(monkeypatch):
+    # 물러선 시간대로도 오픈 시각 계산이 똑같이 나와야 의미가 있다.
+    from datetime import datetime, timedelta, timezone
+
+    import paradogo.clock as clock
+
+    fixed = timezone(timedelta(hours=9), "KST")
+    now_real = datetime(2026, 8, 28, 12, 0, tzinfo=clock.KST)
+    now_fallback = datetime(2026, 8, 28, 12, 0, tzinfo=fixed)
+
+    a = clock.next_open_datetime(now_real)
+    b = clock.next_open_datetime(now_fallback)
+    assert a.utctimetuple() == b.utctimetuple()

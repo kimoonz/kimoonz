@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
@@ -17,7 +17,25 @@ import requests
 
 log = logging.getLogger(__name__)
 
-KST = ZoneInfo("Asia/Seoul")
+def _korea_timezone() -> tzinfo:
+    """한국 시간대.
+
+    Windows 에는 시간대 데이터베이스가 없어서 ZoneInfo("Asia/Seoul") 이 그냥 실패한다
+    (tzdata 패키지를 따로 깔아야 한다). 그것 하나 때문에 프로그램이 아예 뜨지 못하면
+    안 되므로, 없으면 고정 UTC+9 로 물러선다. 한국은 서머타임이 없어 결과가 같다.
+    """
+    try:
+        return ZoneInfo("Asia/Seoul")
+    except Exception as exc:  # ZoneInfoNotFoundError 등
+        log.warning(
+            "시간대 데이터(tzdata)를 찾지 못해 고정 UTC+9 로 진행합니다. "
+            "한국은 서머타임이 없어 계산 결과는 같습니다. (%s)",
+            exc,
+        )
+        return timezone(timedelta(hours=9), "KST")
+
+
+KST = _korea_timezone()
 
 
 def now_kst() -> datetime:
@@ -58,7 +76,7 @@ def open_datetime_for_stay(
     day_of_month: int = 1,
     hour: int = 9,
     minute: int = 0,
-    tz: ZoneInfo = KST,
+    tz: tzinfo = KST,
 ) -> datetime:
     """그 날짜의 예약이 열렸던(열릴) 시각.
 
