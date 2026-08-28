@@ -80,6 +80,8 @@ python -m paradogo --date 2026-09-19 --nights 1 --zones C,D start
 | --- | --- | --- |
 | 감시 시작 (계속 켜두기) | `watch.bat` 더블클릭 | `./watch.sh` |
 | 지금 돌고 있나 확인 | `status.bat` 더블클릭 | `./status.sh` |
+| 예약 가능한 날짜 보기 | `scan.bat` 더블클릭 | `./scan.sh` |
+| **뭔가 안 될 때 점검** | `doctor.bat` 더블클릭 | `./doctor.sh` |
 
 명령어로 쓰신다면 `python -m paradogo track --forever` / `python -m paradogo status` 입니다.
 
