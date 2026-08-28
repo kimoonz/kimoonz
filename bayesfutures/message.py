@@ -86,17 +86,7 @@ def format_signal(cfg: Config, sig: Signal, overlap: str | None = None) -> str:
             f"<b>{s.contracts}계약</b>  (1계약 리스크 ${per:,.0f})"
         )
     if sig.sizing and all(s.contracts == 0 for s in sig.sizing):
-        cheapest = min(sig.sizing, key=lambda s: s.spec.point_value)
-        per = sig.stop_distance * cheapest.spec.point_value
-        pct = cfg.account.risk_per_trade_pct / 100.0
-        need_equity = per / pct if pct > 0 else 0.0
-        need_pct = per / cfg.account.equity_usd * 100.0 if cfg.account.equity_usd else 0.0
-        lines.append(
-            f"  ⚠️ 1계약도 리스크 한도를 넘습니다. "
-            f"{_esc(cheapest.spec.code)} 1계약을 잡으려면 "
-            f"계좌 ${need_equity:,.0f} (현 리스크 {cfg.account.risk_per_trade_pct:.1f}%) "
-            f"또는 리스크 {need_pct:.1f}% 가 필요합니다 — 진입 보류를 권합니다."
-        )
+        lines.append(_zero_size_note(cfg, sig))
     lines.append("")
 
     if sig.reasons:
@@ -115,6 +105,31 @@ def format_signal(cfg: Config, sig: Signal, overlap: str | None = None) -> str:
     lines.append("")
     lines.append("<i>확률 추정일 뿐 보장이 아닙니다. 손절은 반드시 걸어두세요.</i>")
     return "\n".join(lines)
+
+
+def _zero_size_note(cfg: Config, sig: Signal) -> str:
+    """0계약이 나온 이유를 정확히 짚어준다.
+
+    '계좌가 작아서'와 '확률이 임계치에 가까워서'는 대응이 완전히 다르다.
+    """
+    cheapest = min(sig.sizing, key=lambda s: s.spec.point_value)
+    if cheapest.blocked_by_confidence:
+        return (
+            f"  ⚠️ 신뢰도 스케일링으로 0계약입니다. 확률 {sig.prob:.1%}가 임계치에 가까워"
+            f" 리스크 한도의 {cheapest.size_factor:.0%}만 씁니다."
+            f" 한도를 다 쓰면 {_esc(cheapest.spec.code)} {cheapest.full_budget_contracts}계약."
+            f" 확신이 서면 소량, 아니면 보류."
+        )
+    per = cheapest.per_contract_risk
+    pct = cfg.account.risk_per_trade_pct / 100.0
+    need_equity = per / pct if pct > 0 else 0.0
+    need_pct = per / cfg.account.equity_usd * 100.0 if cfg.account.equity_usd else 0.0
+    return (
+        f"  ⚠️ 1계약도 리스크 한도를 넘습니다. {_esc(cheapest.spec.code)} 1계약 리스크가"
+        f" ${per:,.0f}이라, 계좌 ${need_equity:,.0f} (현 리스크"
+        f" {cfg.account.risk_per_trade_pct:.1f}%) 또는 리스크 {need_pct:.1f}%가"
+        f" 필요합니다 — 진입 보류를 권합니다."
+    )
 
 
 def _regime_line(pred: Prediction) -> str:

@@ -105,8 +105,31 @@ def test_undersized_account_warning_states_requirement(tmp_path):
     cfg = Config()
     cfg.account.equity_usd = 30_000
     pred = Prediction(GOLD, "daily", "1d", pd.Timestamp("2026-08-27", tz="UTC"),
-                      4600.0, 4600.0, 68.85, 0.70, 0.0, [], None, [], 1500, 0.5, 0.5)
+                      4600.0, 4600.0, 68.85, 0.90, 0.0, [], None, [], 1500, 0.5, 0.5)
     text = re.sub(r"<[^>]+>", "", format_signal(cfg, build_signal(cfg, pred)))
     assert "1계약도 리스크 한도를 넘습니다" in text
-    assert "MGC 1계약을 잡으려면" in text
     assert "$68,850" in text        # 68.85 ATR × $10/pt ÷ 1%
+
+
+def test_confidence_blocked_size_says_so_instead(tmp_path):
+    """리스크 한도로는 잡히는데 신뢰도 스케일링 때문에 0이면, 그렇게 말해야 한다."""
+    import re
+
+    import pandas as pd
+
+    from bayesfutures.instruments import GOLD
+    from bayesfutures.message import format_signal
+    from bayesfutures.model import Prediction
+    from bayesfutures.signals import build_signal
+
+    cfg = Config()
+    cfg.account.equity_usd = 80_000          # 한도 $800 > 1계약 리스크 $688
+    pred = Prediction(GOLD, "daily", "1d", pd.Timestamp("2026-08-27", tz="UTC"),
+                      4600.0, 4600.0, 68.85, 0.634, 0.0, [], None, [], 1500, 0.5, 0.55)
+    sig = build_signal(cfg, pred)
+    assert sig.sizing[0].blocked_by_confidence
+    assert sig.sizing[0].full_budget_contracts == 1
+    text = re.sub(r"<[^>]+>", "", format_signal(cfg, sig))
+    assert "신뢰도 스케일링으로 0계약" in text
+    assert "한도를 다 쓰면 MGC 1계약" in text
+    assert "1계약도 리스크 한도를 넘습니다" not in text

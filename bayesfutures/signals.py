@@ -30,8 +30,16 @@ class Side(Enum):
 class Sizing:
     spec: ContractSpec
     contracts: int
-    risk_usd: float          # 실제 걸리는 금액 (계약수 × 손절폭 × 승수)
-    kelly_contracts: float   # 분수 켈리가 제안한 계약 수 (참고용)
+    risk_usd: float           # 실제 걸리는 금액 (계약수 × 손절폭 × 승수)
+    kelly_contracts: float    # 분수 켈리가 제안한 계약 수 (참고용)
+    per_contract_risk: float = 0.0   # 1계약당 손절 시 손실
+    full_budget_contracts: int = 0   # 신뢰도 스케일링 없이 리스크 한도만 봤을 때
+    size_factor: float = 1.0         # 적용된 신뢰도 배수
+
+    @property
+    def blocked_by_confidence(self) -> bool:
+        """리스크 한도로는 잡히는데 신뢰도 스케일링 때문에 0이 된 경우."""
+        return self.contracts == 0 and self.full_budget_contracts >= 1
 
 
 @dataclass
@@ -144,11 +152,18 @@ def _size(cfg: Config, spec: ContractSpec, stop_distance: float, kelly: float,
     if per_contract_risk <= 0:
         return Sizing(spec, 0, 0.0, 0.0)
 
-    by_risk = risk_budget * size_factor / per_contract_risk
     by_kelly = (cfg.account.equity_usd * kelly) / per_contract_risk if kelly > 0 else 0.0
-    contracts = int(math.floor(min(by_risk, by_kelly) if by_kelly > 0 else by_risk))
-    contracts = max(0, min(contracts, cfg.account.max_contracts))
-    return Sizing(spec, contracts, contracts * per_contract_risk, by_kelly)
+
+    def _floor(scaled_budget: float) -> int:
+        n = scaled_budget / per_contract_risk
+        n = min(n, by_kelly) if by_kelly > 0 else n
+        return max(0, min(int(math.floor(n)), cfg.account.max_contracts))
+
+    contracts = _floor(risk_budget * size_factor)
+    full = _floor(risk_budget)
+    return Sizing(spec, contracts, contracts * per_contract_risk, by_kelly,
+                  per_contract_risk=per_contract_risk, full_budget_contracts=full,
+                  size_factor=size_factor)
 
 
 def combine(signals: dict[str, Signal]) -> str | None:
