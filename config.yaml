@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────
+# 확률(베이지안) 기반 해외선물 알림 설정
+# 비밀값(텔레그램 토큰)은 여기 두지 말고 .env 에 넣으세요.
+# ─────────────────────────────────────────────────────────────
+
+instruments: [gold, silver, crude, nasdaq]   # 금 · 은 · 크루드오일 · 나스닥100
+
+poll_seconds: 300        # 상시 감시 모드에서 몇 초마다 새 봉을 확인할지
+state_dir: state         # 발송 이력 저장 위치 (재시작해도 중복 발송 방지)
+
+account:
+  equity_usd: 10000      # ★ 본인 계좌 평가금으로 바꾸세요 (계약 수 계산의 기준)
+  risk_per_trade_pct: 1.0  # 1회 매매에 걸 최대 손실 (계좌의 %)
+  kelly_fraction: 0.25   # 켈리 비율의 1/4만 사용 (전액 켈리는 파산 위험이 큽니다)
+  max_contracts: 10      # 안전장치
+
+costs:                   # 기대값 계산에서 차감 — 실제 증권사 조건으로 바꾸세요
+  commission_per_contract: 2.5   # 왕복 수수료 (USD, 마이크로 계약 기준)
+  slippage_ticks: 1.0            # 진입+청산 합산 슬리피지 (틱)
+
+data:
+  cache_dir: data_cache
+  cache_minutes: 30      # 같은 시세를 몇 분간 재사용할지
+  source: auto           # auto | yahoo | stooq
+  use_extras: true       # 달러지수 · VIX 등 상관 자산을 증거로 사용
+
+alerts:
+  signal_alerts: true         # 임계치를 넘으면 즉시 알림
+  briefing_enabled: true      # 하루 1회 전체 요약
+  briefing_time_kst: "08:00"  # 브리핑 시각 (한국시간)
+  send_on_hold: false         # 관망도 개별 알림으로 보낼지
+  timezone: Asia/Seoul
+
+timeframes:
+  daily:
+    enabled: true
+    interval: 1d
+    lookback_days: 7300       # 20년
+    label:                    # 삼중 배리어 라벨 (무엇을 '성공'으로 볼 것인가)
+      atr_window: 14
+      up_mult: 1.0            # 상단 = 종가 + 1.0 × ATR
+      down_mult: 1.0          # 하단 = 종가 - 1.0 × ATR
+      horizon: 10             # 최대 10봉 보유
+    signal:
+      long_threshold: 0.58    # 이 확률 이상이면 매수 신호
+      short_threshold: 0.42   # 이 확률 이하이면 매도 신호
+      min_edge_r: 0.05        # 수수료 뺀 기대값이 이보다 커야 진입
+      min_prob_over_base: 0.02  # 기준확률(종목 드리프트)을 이만큼 넘어야 신호로 인정
+      cooldown_bars: 3        # 같은 방향 재알림까지 대기할 봉 수
+    bayes:
+      n_bins: 5               # 피처를 몇 개 분위 구간으로 나눌지
+      laplace_alpha: 1.0
+      shrink_m: 40.0          # 구간 표본이 적을 때 얼마나 축소할지
+      prior_strength: 20.0
+      prior_up_rate: 0.5
+      train_window: 1500      # 최근 몇 봉으로 학습할지
+      min_train: 300
+      validation_frac: 0.25
+      use_regime: true        # HMM 국면 필터 사용
+      regime_states: 3
+
+  hourly:
+    enabled: true
+    interval: 1h
+    lookback_days: 720        # 야후 1시간봉은 약 2년치가 한계
+    label:
+      atr_window: 14
+      up_mult: 1.0
+      down_mult: 1.0
+      horizon: 8
+    signal:
+      long_threshold: 0.60
+      short_threshold: 0.40
+      min_edge_r: 0.05        # 수수료 뺀 기대값이 이보다 커야 진입
+      min_prob_over_base: 0.02  # 기준확률(종목 드리프트)을 이만큼 넘어야 신호로 인정
+      cooldown_bars: 6
+    bayes:
+      n_bins: 5
+      laplace_alpha: 1.0
+      shrink_m: 40.0
+      prior_strength: 20.0
+      prior_up_rate: 0.5
+      train_window: 3000
+      min_train: 300
+      validation_frac: 0.25
+      use_regime: true
+      regime_states: 3

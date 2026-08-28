@@ -1,0 +1,27 @@
+# Linux systemd 유닛 — 부팅 시 자동 시작 + 죽으면 자동 재시작
+#
+#   sudo cp scripts/bayesfutures.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now bayesfutures
+#   journalctl -u bayesfutures -f      # 로그 보기
+#
+# User / WorkingDirectory / ExecStart 경로는 본인 환경에 맞게 고치세요.
+
+[Unit]
+Description=확률 기반 해외선물 텔레그램 알림
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=CHANGE_ME
+WorkingDirectory=/home/CHANGE_ME/kimoonz
+EnvironmentFile=/home/CHANGE_ME/kimoonz/.env
+ExecStart=/usr/bin/python3 /home/CHANGE_ME/kimoonz/run.py watch
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
