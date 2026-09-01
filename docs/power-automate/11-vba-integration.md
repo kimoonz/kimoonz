@@ -28,6 +28,7 @@ PA_Call("주문등록", payload)
 2. 요청 본문 JSON 스키마 지정 — 샘플: [`samples/http-trigger-schema.json`](../../samples/http-trigger-schema.json)
 3. 9.4절의 골격대로 검증 → 처리 → 오류 → **응답** 구성
    (오류 경로에도 응답 액션이 있어야 VBA가 타임아웃 대신 명확한 오류를 받습니다)
+   → **클릭 단위 안내는 [12장](12-flow-setup.md)** 을 따라 하세요.
 4. 저장하면 **HTTP POST URL**이 생성됩니다 — 이걸 VBA에 등록합니다.
 
 응답은 항상 같은 모양으로 통일하세요:
@@ -118,4 +119,4 @@ XP_RefreshLinkedPictures "C:\보고\주간보고.pptx"          ' 기존 PPT의 
 
 ---
 
-이전: [10. 문제 해결](10-troubleshooting.md) · [목차](README.md)
+이전: [10. 문제 해결](10-troubleshooting.md) · 다음: [12. 포털에서 연동 플로우 만들기](12-flow-setup.md)

@@ -18,6 +18,7 @@ UI 클릭 순서를 나열하는 대신, **왜 그렇게 만들어야 하는지*
 | 9 | [실전 레시피](09-recipes.md) | 바로 쓰는 패턴 모음 |
 | 10 | [문제 해결](10-troubleshooting.md) | 자주 나오는 오류와 원인 |
 | 11 | [VBA 연동](11-vba-integration.md) | Excel VBA에서 플로우 호출, PPT 자동 보고 |
+| 12 | [포털에서 연동 플로우 만들기](12-flow-setup.md) | 클릭 단위로 따라 하는 Microsoft 쪽 설정 |
 
 ## 학습 경로
 
