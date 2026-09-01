@@ -1,0 +1,3 @@
+*.bas text working-tree-encoding=UTF-8 eol=crlf
+*.md text eol=lf
+*.json text eol=lf

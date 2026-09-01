@@ -1,0 +1,20 @@
+{
+  "$comment": "'HTTP 요청 수신 시' 트리거의 [요청 본문 JSON 스키마] 칸에 붙여넣으세요. src/vba 모듈의 기본 페이로드와 짝을 이룹니다.",
+  "type": "object",
+  "properties": {
+    "requestId": {
+      "type": "string",
+      "description": "VBA PA_NewRequestId()가 생성. 중복 실행 차단용"
+    },
+    "action": {
+      "type": "string",
+      "description": "upsert | query | ping 등 플로우 스위치 분기 키"
+    },
+    "rows": {
+      "type": "array",
+      "description": "PA_RangeToArray 결과. 첫 행 머리글이 각 객체의 키가 됩니다",
+      "items": { "type": "object" }
+    }
+  },
+  "required": ["action"]
+}
